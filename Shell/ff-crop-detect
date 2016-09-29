@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+# -*- coding: utf-8 -*-
+# -*- mode: sh -*-
+#
+# crop detect video file
+#
+# FFmpeg Filters Documentation:
+#   https://www.ffmpeg.org/ffmpeg-filters.html#cropdetect
+# BogotoBogo: (lotsa good stuff here)
+#   http://www.bogotobogo.com/FFMpeg/ffmpeg_cropdetect_ffplay.php
+# How To Set Timeout For A Shell Command:
+#   http://www.cyberciti.biz/faq/shell-scripting-run-command-under-alarmclock/
+# Bash Reference Manual:
+#   https://www.gnu.org/software/bash/manual/bash.html#Pipelines
+# Robust Bash shell scripts
+#   http://www.davidpashley.com/articles/writing-robust-shell-scripts
+#
+cmdName=$(basename "$0")
+# logFile="/tmp/${cmdName}.log"
+tFile=$(mktemp /tmp/ff-crop-detect.XXXXX)
+tDum="/tmp/dummy.mp4"
+# Version 0.1.3
+# LastEdit: 2016-09-29
+
+#
+# bash version of python/perl die()
+# Print an error message and exit with given status
+# call as: die status "message" ["message" ...]
+# https://www.dartmouth.edu/~rc/classes/ksh/print_pages.shtml
+# https://stackoverflow.com/questions/7868818/in-bash-is-there-an-equivalent-of-die-error-msg
+#
+function die()
+{
+  local _STDERR_="/dev/fd/1"
+
+  local exitStatus=${1}; shift
+  echo -e "${BASH_SOURCE[1]} Died at ${BASH_LINENO[0]} in ${FUNCNAME[1]}()" > \
+    ${_STDERR_}
+  for i in "$@";
+  do
+    echo -e "${i}" > ${_STDERR_}
+  done
+  exit "${exitStatus}"
+}
+
+#
+# detect cropping of video at 02:30 start time for 00:15 seconds
+# save stderr output in tFile, stdout to /dev/null
+# ? maybe add a trap to remove tmp files
+#
+function detect {
+  local a="$1"
+  local cr="cropdetect=24:16:0"
+  local nul="/dev/null"
+
+  ffmpeg \
+    -ss 2:30 \
+    -t 00:10 \
+    -i "$a" \
+    -y \
+    -vf "$cr" \
+    "$tDum" \
+    1> "$nul" \
+    2>> "$tFile"
+}
+#
+# send output of ffmpeg to tmpfile
+# process that with pipes
+#
+if [ "$#" -lt "1" ]; then
+  die 1 \
+    "" \
+    "Oops - need video filename to ffmpeg crop detect" \
+    "Usage: ${cmdName}: <file1-to-crop-detect>" \
+    ""
+else
+  #
+  # previously used timeout 10.0s to run command for 10.0s
+  # stderr output was getting lost in process - changed to
+  # using -t flag of ffmpeg to set length of ffmpeg time
+  #
+  # detect crop and filter output thru grep/awk/sort/uniq
+  detect "$1"
+  grep < "$tFile" "crop="|                      # grep out crop part
+    awk -F"crop=" '{print $2}'|                 # keep part after crop=
+    sort|                                       # sort in order
+    uniq -c|                                    # reduce to cnt" "uniq
+    sort -n|                                    # sort by count
+    tail -1|                                    # last is most popular
+    awk '{print "-vf crop=" $2}'                # print sngl crop field
+
+    # remove dummy.mp4 and tmpfile
+  /bin/rm -f /tmp/dummy.mp4
+  /bin/rm -f "$tFile"
+fi
