@@ -17,7 +17,9 @@ cmdName=$(basename "$0")
 #
 function die()
 {
+  local _STDERR_="/dev/fd/1"
   local exitStatus=${1}; shift
+  
   echo -e "${BASH_SOURCE[1]} Died at ${BASH_LINENO[0]} in ${FUNCNAME[1]}()" > \
     ${_STDERR_}
   for i in "$@";
