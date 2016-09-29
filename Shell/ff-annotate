@@ -1,1 +1,554 @@
+#!/usr/bin/env bash
+# -*- mode: sh -*-
+# -*- coding: utf-8 -*-
+# http://www.snowfrog.net/2009/01/08/vim-modelines/
+# "vim:ts=tab-stop, sts=soft-tab-stop, sw=shift-width
+# "vim:sw=text-width, et=expand-tab, ai=auto-indent
+# "vim:et:ft=sh:sts=2:ts=2:sw=2:tw=80:ai
+#
+# linted with atom/shellcheck 2016-09-18
+# removed debug added logging 2016-09-18
+# added bash_lineno[0] to logging 2016-09-19
+# relies on identify and display (imageMagick)
+# relies on convert and compose (imageMagick)
+# sudo apt-get install imagemagick
+#
+FALSE=0
+TRUE=1
+_TOSCRN_=$FALSE
+_TOSCRN_=$TRUE
+_TOFILE_=$TRUE
+_TOFILE_=$FALSE
+_TOPOPUP_=$FALSE
+# logging output to screen and logfile
+# based on _TOSCRN_ and/or _TOFILE_
+# being TRUE or FALSE
+_STDERR_="/dev/fd/1"
+_STDOUT_="/dev/fd/2"
+IFSDEF=$' \t\n'                 # for resetting IFS
+IFS=$' \t\n'                    # Default IFS=<space><newline><tab>
+cmdName=$(basename "$0")
+logFile="/tmp/${cmdName}.log"
+Home=~
+#
+# make sure imagemagick cmds
+# are found on the system
+#
+identify=$(which identify)
+display=$(which display)
+composite=$(which composite)
+convert=$(which convert)
+if [[ ! ${identify} || ! ${display} ||
+      ! ${composite} || ! ${convert} ]]; then
+  die 1 \
+    "imageMagick does not appear to be installed" \
+    "sudo apt-get install imagemagick" \
+    "will correct this problem"
+  #echo "imageMagick does not appear to be installed" > ${_STDERR_}
+  #echo "sudo apt-get install imagemagick" > ${_STDERR_}
+  #echo "will correct this problem" > ${_STDERR_}
+  #exit 1
+fi
+#
+# Last Edit: 2016-09-22 (magoo)
+# Version: = v0.2.1
+# lint Status: = True
+#
+# Candice="/home/magoo/.fonts/Candice.ttf"
+Chisel="/home/magoo/.fonts/linochsl.ttf"
+# Gentium="/home/magoo/.fonts/GentiumPlusCompact-R.ttf"
+# KGThis="/home/magoo/.fonts/KGThisIsNotGoodbye.ttf"
 
+# presets
+grav="North"                # top centered
+aloc="+0+0"				    # annotate posn from gravity
+dslv="50"				    # 50% dissolve default
+locn="0,0"				    # draw text offset
+font="${Chisel}"            # font
+pnts="72"				    # point size
+fill="red"				    # fill color
+strk="red"				    # stroke color
+strw="1"				    # strokewidth
+xcbg="transparent"          # xc:background
+ptrn="checkerboard"	        # pattern
+
+#
+# logging output to screen and logfile
+# based on _TOSCRN_ and/or _TOFILE_
+# being TRUE or FALSE
+#
+function logging()
+{
+  set +o errexit
+  ((_TOSCRN_)) || ((_TOFILE_)) && _DS_=$(date +"%H:%M:%S")
+  ((_TOSCRN_)) || ((_TOFILE_)) && _INFO_="FN=${FUNCNAME[1]},LN=${BASH_LINENO[0]}"
+  ((_TOSCRN_)) && echo -e "[${_DS_}]-${_INFO_}}-$*" > "${_STDOUT_}"
+  ((_TOFILE_)) && echo -e "[${_DS_}]-${_INFO_}}-$*" >> "${logFile}"
+  set -o errexit
+}
+
+#
+# display gui popup message on users screen
+# based on _TOPOPUP_ being TRUE to work
+#
+function notify()
+{
+  set +o errexit;
+  ((_TOPOPUP_)) && _DS_=$(date +"%H:%M:%S")
+  ((_TOPOPUP_)) && notify-send "[${_DS_}]-$*"
+  set -o errexit;
+}
+
+function Usage()
+{
+cat <<EOF_Usage
+  Annotate an image with font or graphically drawn text
+
+  Usage: ${cmdName} [flags] <orig-image-name> <annotation-text>
+  Flags:
+    -h)elp (Show help message)
+    -d)issolve <dissolve (int)% default=${dslv}>
+    -f)ill <fill color (default=${fill})>
+    -g)rav <gravity to use for text placement (default=${grav})>
+    -o)ut <specify output filename>
+    -p)nts <point size of text (int - default=${pnts})>
+    -s)trk <stroke color (default=${strk})>
+    -x)cbg <xc:background (default=${xcbg})>
+    -A)loc <+X+Y offset from present gravity (default=${aloc}>
+    -B)lank Canvas <""> (create a blank canvas) && exit:
+       Default: "128x128~tile:pattern:checkerboard" ||
+       ["WWWxHHH>~xc:color | tile:pattern:name"]
+    -D)raw (Use Draw not Annotate - default=FALSE)
+    -F)ont <use specified font (default=${font})>
+    -L)ocn <WxY Geometry within the canvas (default=${locn})>
+    -P)attern <pattern (default=${ptrn})>
+    -S)trw <strokewidth (int - default=${strw})>
+
+  Process:
+    Create a transparent image same size as input.  Insert
+    text at specified XY location.  Compose a new image with
+    the two images and save.
+
+EOF_Usage
+  exit 1
+}
+
+#
+# create transparent image with annotated text
+#
+function annoText()
+{
+  logging "Size=${fpSz}, Bgnd=${xcbg}, Fill=${fill}, Grav=${grav}"
+  logging "Font=${font}, Pnts=${pnts}"
+  logging "Text=${text}"
+  ${convert} -size "${fpSz}" \
+    xc:${xcbg} \
+    -fill ${fill} \
+    -stroke ${strk} \
+    -strokewidth ${strw} \
+    -font ${font} \
+    -pointsize ${pnts} \
+    -gravity ${grav} \
+    -annotate ${aloc} "${text}" \
+    "${fpi}" > /dev/null 2>&1
+  #-tile pattern:$ptrn \
+}
+
+#
+# -xc:transparent : xc means X window color
+# -font Palatino-Bold : the font of the text
+#    use "identify -list font" to see fonts
+# -pointsize 48 = font point size
+# -fill black : the color of the text
+#    use http://www.imagemagick.org/script/color.php
+#    for a list of colornames
+# -draw "text 20,55 'Text'" : the position of the text and the text itself
+# $fpi - output file name
+#
+# create transparent image with drawn text
+#
+function annoDraw()
+{
+  logging "Size=${fpSz}, Bgnd=${xcbg}, Fill=${fill}, Grav=${grav}"
+  logging "Font=${font}, Pnts=${pnts}, Strk=${strk}, Strw=${strw}"
+  logging "Text=${text}"
+  ${convert} -size "${fpSz}" \
+     xc:${xcbg} \
+    -font ${font} \
+    -pointsize ${pnts} \
+    -gravity ${grav} \
+    -fill ${fill} \
+    -stroke ${strk} \
+    -strokewidth ${strw} \
+    -draw "text ${locn} '${text}'" \
+    "${fpi}" > /dev/null 2>&1
+}
+
+#
+# composite = compose new image
+# -dissolve 50% = 50% transparency of inserted image
+# -quality 100 = keep the quality at 100%
+# font_shadow.jpg = image to insert
+# dickensian.jpg = our main image
+# testout.jpg = final composite image
+#
+# compose new composite image
+#
+function compose()
+{
+  ${composite} \
+    -dissolve ${dslv}% \
+    -quality 100 \
+    "${fpi}" \
+    "${fn}" \
+    "${fpo}"
+}
+
+#
+# findFP{} - split path/filename.ext into logical parts
+# args:
+#   $1 = path/filename.ext
+#
+# set $fp to full filename string
+# Result: this command seperates them into logical parts
+#   $fn = filename
+#   $fnr = filename root
+#   $fnp = filename path
+#   $ext = filename ext (including .)
+#
+# http://www.thegeekstuff.com/2010/07/bash-string-manipulation/
+#   bash string functions information
+#
+function findFP()
+{
+  local spc=' '     # ' ' for match
+  local dsh='-'     # '-' single dash
+  local dot='.'     # '.' for match
+  local fp="$1"     # incoming fpath/fname.ext
+  local fnr         # fname-root (0)
+  local ext         # fname-ext (1)
+  local fnp         # fname-path (2)
+  local fn          # orig fname (3)
+  local dp          # BASH_REMATCH (4)
+
+  #
+  # if filename.ext includes spaces
+  # change ' ' to '-' and rename file
+  # so that everything won't blow-up
+  #
+  if [[ "${fp}" =~ ${spc} && "${fp}" =~ ${dot} ]]; then
+    if [[ -e "${fp}" ]]; then
+      new=${fp//spc/$dsh}                # change all ' ' to '-'
+      #new="$(echo "${fp}"|sed -e 's/ /-/g')"
+      /bin/mv "${fp}" "${new}"
+      logging "${fp} changed to ${new}"
+      fp="${new}"          # $fp is changed to new
+    fi
+  fi
+
+  #
+  # split path/filename.ext into its corresponding parts
+  #
+  [[ $fp =~ ^(.*/)?(.+)?$ ]] && { dp=${BASH_REMATCH[1]}; fn=${BASH_REMATCH[2]};
+  ext=$([[ $fn = *.* ]] && printf %s ".${fn##*.}" || printf '');
+  [[ $fn == "$ext" ]] && { fnr=$fn; ext=''; } || fnr=${fn:0:$((${#fn}-${#ext}))}; }
+  fnp=$(dirname "$fp"); dp=${dp}    # stop shellcheck from bitchin'
+
+  #       0      1      2     3
+  nP=( ${fnr} ${ext} ${fnp} ${fn} )       # dp is usually dir path
+  echo "${nP[@]}"                         # return parts values to caller
+  return
+}
+
+#
+# verify that a font is valid to imagemagick
+# if that fails look in /user/home/.fonts
+# return the fontname or path to font from .fonts
+# validName is Font or None (this needs work)
+#
+function verifyFont {
+  local fn=${1}
+  local Home=~
+  validName='0'
+
+  validName=$(${convert} -list font|grep 'Font:'|grep -wc "${fn}")
+  # if nothing returned
+  if [[ "${validName}" -eq "0" ]]; then
+    fnTmp=$(echo "${Home}"/.fonts/*|tr '' '\n'|grep "${fn}")
+    #fnTmp=$(ls -1 $Home/.fonts|grep "${fn}")
+    logging "${fnTmp}"
+    validName="${Home}/.fonts/${fnTmp}"
+    logging "${validName}"
+    return
+  else
+    logging "${validName}"
+    validName="${fn}"
+    logging "${validName}"
+    return
+  fi
+}
+
+#
+# bash version of python/perl die()
+# Print an error message and exit with given status
+# call as: die status "message" ["message" ...]
+# https://www.dartmouth.edu/~rc/classes/ksh/print_pages.shtml
+# https://stackoverflow.com/questions/7868818/in-bash-is-there-an-equivalent-of-die-error-msg
+#
+function die()
+{
+  local exitStatus=${1}; shift
+  echo -e "${BASH_SOURCE[1]} Died at ${BASH_LINENO[0]} in ${FUNCNAME[1]}()" > \
+    ${_STDERR_}
+  for i in "$@";
+  do
+    echo -e "${i}" > ${_STDERR_}
+  done
+  exit "${exitStatus}"
+}
+
+#
+# scan CLI Args for fnames
+# with space(s) in them
+# modify fname to change
+# spaces to dashes.  Rename.
+# this does not affect $0
+# https://stackoverflow.com/questions/15794598/reverse-command-line-arguments-in-shell-script
+# https://stackoverflow.com/questions/918886/how-do-i-split-a-string-on-a-delimiter-in-bash
+# https://unix.stackexchange.com/questions/26784/understanding-ifs#26830
+# http://www.unix.com/shell-programming-and-scripting/58611-resetting-ifs-variable.html
+#
+function scanArgs()
+{
+  local spc=' '
+  local dsh='='
+  local dot="."
+  local args=""
+  local new
+  local i
+
+  for i;      # $i will be each CLI arg
+  do
+    logging "${FUNCNAME[0]} processing ${i}"
+    if [[ "${i}" =~ ${spc} && "${i}" =~ ${dot} ]]; then
+      if [[ -e "${i}" ]]; then
+        # builtin ${string//substring/replacement}
+        new=${i//spc/$dsh}        # change all ' ' to '-'
+        #new="$(echo "${i}"|sed -e 's/ /-/g')"
+        /bin/mv "${i}" "${new}"
+        logging "${i} changed to ${new}"
+        i="${new}"          # $i is changed to new
+      fi
+    fi
+    if [[ -z ${args} ]]; then
+      args="${i}"
+    else
+      args="${args} ${i}";   # init args
+    fi
+    args="${args} ${i}";    # add to new args
+  done
+  echo "${args[*]}"         # return to caller
+  return
+}
+
+#
+# http://www.techrepublic.com/blog/linux-and-open-source/how-do-i-install-and-use-fonts-in-linux/
+# http://xpt.sourceforge.net/techdocs/media/image/imagemagick/im03-ImageMagickAndFonts/single/
+# http://www.linuxandlife.com/2012/07/use-imagemagick-to-add-watermark-to.html
+# http://www.imagemagick.org/Usage/layers/#convert
+# http://www.imagemagick.org/Usage/annotating/#anno_on
+# hset -o errexit                                          # exit on error
+set -o nounset                                          # no empty vars
+set -o pipefail                                         # fail pipe-errsttp://www.imagemagick.org/Usage/fonts/
+# Set transparent background using ImageMagick and commandline prompt
+#   https://stackoverflow.com/questions/9155377/set-transparent-background-using-imagemagick-and-commandline-prompt
+# GraphicsMagick FAQ:
+#   http://www.graphicsmagick.org/FAQ.html
+# Supported Image Formats and built-ins:
+#   http://www.imagemagick.org/script/formats.php#builtin-images
+#
+# advanced bash shell programming (very good)
+#   https://www.dartmouth.edu/~rc/classes/ksh/print_pages.shtml
+#   https://unix.stackexchange.com/questions/219268/how-to-add-new-lines-when-using-echo
+#   https://stackoverflow.com/questions/13210880/replace-one-substring-for-another-string-in-shell-script#13210909
+
+#
+# main()
+#
+set -o errexit                                          # exit on error
+set -o nounset                                          # no empty vars
+set -o pipefail                                         # fail pipe-errs
+#
+# if done logging then
+# if logfile exists - rm
+#
+if ! ((_TOFILE_)); then
+  if [[ -e "${logFile}" ]]; then
+    /bin/rm -f "${logFile}"
+  fi
+fi
+
+logging "Home=${Home}"
+logging "ArgCount=$#, Args=$*"
+
+#
+# process command line args
+#
+while getopts "hb:d:f:g:l:o:p:s:x:A:B:DF:L:P:S:" opt
+do
+  case $opt in
+    d)
+      dslv=${OPTARG}
+      logging "dslv=${dslv}"
+    ;;
+    f)
+      fill=${OPTARG}
+      strk=${OPTARG}
+      logging "fill=${fill}"
+    ;;
+    g)
+      grav=${OPTARG}
+      logging "grav=${grav}"
+    ;;
+    o)
+      fpo=${OPTARG}
+      logging "fpo=${fpo}"
+    ;;
+    p)
+      pnts=${OPTARG}
+      logging "pnts=${pnts}"
+    ;;
+    s)
+      strk=${OPTARG}
+      logging "strk=${strk}"
+    ;;
+    x)
+      xcbg=${OPTARG}
+      logging "xcbg=${xcbg}"
+    ;;
+    A)
+      aloc=${OPTARG}
+      logging "aloc=${aloc}"
+    ;;
+    B)
+      # create a blank canvas and exit
+      Arg=${OPTARG}
+      # if OPTARG is ""
+      # give Arg some defaults
+      if [[ -z ${Arg} ]]; then
+        Arg="128x128~tile:pattern:checkerboard"
+      fi
+      IFS='~'                           # field sep = '~'
+      read -r sz bg  <<< "${Arg}"       # read and parse Arg
+      IFS=${IFSDEF}                     # reset field sep
+      logging "IFS=$(echo "${IFS}"|cat -vte)"
+      #
+      # ${bg} is either 'xc:some color' || 'tile:pattern:some pattern'
+      logging "sz=${sz}, bg=${bg}"
+      ${convert} -size "${sz}" "${bg}" blank-canvas.jpg
+      RC=$?
+      logging "RC=${RC}"
+      if [[ "${RC}" -eq "0" ]]; then
+        "${display}" blank-canvas.jpg &
+        exit "${RC}"
+      else
+        die 1 \
+          "Error: Creating blank-canvas.jpg" \
+          "Cmd=${convert} -size ${sz} ${bg} blank-canvas.jpg"
+      fi
+    ;;
+    D)
+      draw=TRUE
+      logging "draw=TRUE"
+    ;;
+    F)
+      verifyFont "${OPTARG}"
+      font=${validName}
+      logging "font=${font}"
+    ;;
+    L)
+      locn=${OPTARG}
+      logging "locn=${locn}"
+    ;;
+    P)
+      ptrn=${OPTARG}
+      logging "ptrn=${ptrn}"
+    ;;
+    S)
+      strw=${OPTARG}
+      logging "strw=${strw}"
+    ;;
+    \?|h)
+      Usage
+    ;;
+  esac
+done
+shift $((OPTIND - 1))
+logging "ArgCount=${#}, Args=${*}"
+
+if [[ "${#}" -eq "0" ]]; then
+  Usage
+fi
+
+# flags removed - assign remaining args
+file="${1}"					# input file
+text="${2}"					# anno text
+
+#
+# exit if file not found
+#
+if ! [[ -e ${file} ]]; then
+  die 1 "ERROR: File ${file} not found"
+fi
+
+logging "text=${text}"
+
+# (method 0) no return use global vars
+# findFP "$file"            # split filename into parts
+
+# (method 1) assign vars to read of command substitution
+read -r fnr ext fnp fn <<< "$(findFP "$file")"
+#read fnr ext fnp fn dp << PARTS_COMMAND
+  #$(findFP "$file")
+#PARTS_COMMAND
+
+logging "fn-root=${fnr}, fn-ext=${ext}"
+logging "fn-path=${fnp}, filename=${fn}"
+
+# (method 2)assign parts to an array
+# split filename into parts and return parts array
+# parts=($(findFP "$file"))  # split filename into parts
+# logging "parts=${parts[*]}"
+# echo ${#parts[*]}
+# fnr="${parts[0]}"
+# ext="${parts[1]}"
+# fn="${parts[3]}"
+
+#
+# if output file not specified - set it
+#
+if [[ ! "${fpo}" ]]; then
+  fpo="${fnr}-anno${ext}"
+fi
+https://unix.stackexchange.com/questions/26784/understanding-ifs#26830
+# set the temp canvas name
+fpi="temp-image${ext}"
+
+# get size of input image
+fpSz=$(${identify} "${fn}"|awk '{print $3}')
+
+#
+# draw or text depends on the draw flag
+#
+if [[ ! "${draw}" ]]; then
+  annoText
+else
+  annoDraw
+fi
+
+#
+# compose the input image and the transparent text
+# and display it on screen
+#
+compose
+${display} -geometry -50+50 -resize 50% "${fpo}" &
