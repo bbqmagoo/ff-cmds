@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# -*- coding: utf-8 -*-
+# -*- mode: sh -*-
+#
+# compare video 1 to video 2
+#
+cmdName=$(basename "$0")
+# logFile="/tmp/${cmdName}.log"
+# Version 0.1.2
+# LastEdit: 2016-09-29
+#
+# bash version of python/perl die()
+# Print an error message and exit with given status
+# call as: die status "message" ["message" ...]
+# https://www.dartmouth.edu/~rc/classes/ksh/print_pages.shtml
+# https://stackoverflow.com/questions/7868818/in-bash-is-there-an-equivalent-of-die-error-msg
+#
+function die()
+{
+  local exitStatus=${1}; shift
+  echo -e "${BASH_SOURCE[1]} Died at ${BASH_LINENO[0]} in ${FUNCNAME[1]}()" > \
+    ${_STDERR_}
+  for i in "$@";
+  do
+    echo -e "${i}" > ${_STDERR_}
+  done
+  exit "${exitStatus}"
+}
+
+#
+# if not 2 filenames - die
+#
+if [ "$#" -lt "2" ]; then
+  die 1 \
+    "" \
+    "Oops - need 2 filenames to visually compare" \
+    "Usage: ${cmdName}: <file1> <file2>" \
+    ""
+else
+  if [[ -e "$1" && -e "$2" ]]; then
+    ffplay "$1" & ffplay "$2"            # doing it
+  # both not found - die
+  else
+    die 1 \
+      "Error: couldn\'t find both files, maybe you mis-typed"
+  fi
+fi
