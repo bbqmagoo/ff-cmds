@@ -1,0 +1,349 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+# -*- mode: python -*-
+"""2nd attempt at Video W/H/A Calculator in Python (uses YAD)."""
+
+import os
+from sys import argv, exit
+import argparse
+# from magoo.logtools import check_logging_args_argparse, logging (TODO)
+from yad import YAD
+'''
+# python2 uses deprecated replace, import replace for python3 compatability
+# python3 replace() is a method of <class 'str'> and built-in
+from sys import version_info
+if version_info[0] < 3:
+    from string import replace
+'''
+
+# pointer constants to A/W/H fields in Form
+A = 1
+W = 2
+H = 3
+
+
+class Program:
+    """this class holds common program values for this program."""
+
+    def __init__(self):
+        """Initialize my program values."""
+        self.cmdName = os.path.basename(argv[0])		# save my cmdname
+        self.logFile = '/tmp/' + self.cmdName + '.log'  # my log name
+        self.defLogLevel = 20				   # default log level (INFO)
+        self.version = "v0.1.6"
+        self.lastEdit = "2016-04-22"
+        self.lintStatus = True
+        self.args = ""					# command option args
+        self.largs = ""					# command files args
+
+# realize my Program Class
+p = Program()
+
+
+class Video:
+    """values and programs for solving the W/H/A equation."""
+
+    def __init__(self, width, height, aspect):
+        """Initialize my class values."""
+        self.width = int(width)
+        self.width_mod = ''		# mod16 = '~', mod08 = '*', else ''
+        self.height = int(height)
+        self.height_mod = ''    # mod16 = '~', mod08 = '*', else ''
+        self.aspect = float(aspect)
+        self.answerCB = ""
+
+    def findHeight(self):
+        """solve for height - called by solve."""
+        self.height = int(float(self.width/self.aspect))
+        return self.height
+
+    def findWidth(self):
+        """solve for width - called by solve."""
+        self.width = int(float(self.height*self.aspect))
+        return self.width
+
+    def findAspect(self):
+        """solve for aspect - called by solve."""
+        self.aspect = float(self.width)/float(self.height)
+        return self.aspect
+
+    @staticmethod
+    def solve(self):
+        """External callable routine to solve A/W/H equation."""
+        if self.width and self.aspect and self.height == 0:
+            return self.findHeight()
+
+        if self.height and self.aspect and self.width == 0:
+            return self.findWidth()
+
+        if self.width and self.height and self.aspect == 0:
+            return self.findAspect()
+
+    def about(self):
+        """Calculate if Width/Height are ModX=0"""
+        if self.width:
+            tmpMod = self.width % 16		# width
+            if tmpMod == 0:
+                self.width_mod = '~'		# mod 16 = 0
+            elif tmpMod == 8:
+                self.width_mod = '*'		# mod 8 = 0
+            else:
+                self.width_mod = ''		    # not mod 8 or 16 = 0
+        else:
+            self.width_mod = ''
+
+        if self.height:
+            tmpMod = self.height % 16		# height
+            if tmpMod == 0:
+                self.height_mod = '~'		# mod 16 = 0
+            elif tmpMod == 8:
+                self.height_mod = '*'		# mod 8 = 0
+            else:
+                self.height_mod = ''		# not mod 8 or 16 = 0
+        else:
+            self.height_mod = ''
+
+        # new format spec for formatted print:
+        #   https://docs.python.org/2/library/string.html
+        # format-specification-mini-language
+        rval = ('Width={} {}\nHeight={} {}\nAspect={:.2f}'.format(
+            self.width, self.width_mod,
+            self.height, self.height_mod,
+            self.aspect))
+        return (rval)
+
+
+def main():
+    """program executes here"""
+    x = ""
+
+    parser = argparse.ArgumentParser(
+        prog=p.cmdName,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description='Solve for missing part of Aspect Ratio Equation',
+        epilog=p.cmdName + ' ' + p.version + ' ' + p.lastEdit
+    )
+    parser.add_argument(
+        '--height',
+        '-H',
+        required=False,
+        type=str,
+        default='0',
+        metavar='',
+        help='The Height of the Video as a whole Num (if known)'
+    )
+    parser.add_argument(
+        '--width',
+        '-W',
+        required=False,
+        type=str,
+        default='0',
+        metavar='',
+        help='The Width of the Video as a whole Num (if known)'
+    )
+    parser.add_argument(
+        '--aspect', '-A',
+        required=False,
+        type=str,
+        default='0.0',
+        metavar='',
+        help='The Aspect Ratio of the Video as a float Num (if known)'
+    )
+    """
+    (TODO)
+    # parser flags for logging and logging to file
+    # parser.add_argument('--logging','-ll',required=False,type=str,default='20',
+      # help='loglevel=DEBUG|INFO|WARNING|ERROR|CRITICAL',metavar='')
+    # parser.add_argument('--logfile','-lf',action='store_true',required=False,
+      # help='log to '+p.logFile+' instead of the screen')
+    """
+    #
+    # split options and non options into args, largs
+    # args = parser.parse_args() just parses args
+    # non-args generate an error
+    #
+    p.args, p.largs = parser.parse_known_args()
+    # get loglevel and start logging (not uncommented yet)
+    # check_logging_args_argparse(p.args, p.logFile)
+    #
+    # no largs (filenames left) after argscan
+    # print help and exit
+    #
+    if not p.largs and len(p.largs) == 1:
+        parser.print_help()
+        exit(2)
+
+    # we have 2 known parts and 1 unknown part (Solve)
+
+    if p.args.width or p.args.height or p.args.aspect:
+
+        a_Title = ("%s" % (p.cmdName))				# My window Title
+        a_LBL = "Enter any 2 of 3 values below\n" +\
+            "Click [Find Result] button to solve"
+        # pre-define data to put in my editable combo boxes
+        a_CBEs = (							# combo box entries
+            (),				# blank provides an offset
+            # common Aspect Ratios
+            ("1.33", "1.60", "1.78", "1.85", "2.33",
+                "4:3", "16:9", "16:10", "21:9", "^0.00"),
+            # common Widths
+            ("256", "480", "512", "570", "640", "700",
+                "720", "768", "852", "1024", "1280", "^0"),
+            # common Heights
+            ("144", "288", "312", "320", "360", "404",
+                "432", "480", "576", "720", "1024", "^0"),
+        )
+        # initial W/H/A - all 0/0/0.00
+        # Displayed in Form bottom TXT window at startup
+        x = ('Width={}\nHeight={}\nAspect={}'.format(0, 0, 0.00))
+
+        while True:
+            # this TXT field included here because
+            # 'x' will change during my while loop
+            # pre-define the fields in my YAD Form
+            a_Flds = (						        # my form fields
+                ("LBL", a_LBL),                     # LBL Top Label TXT
+                ("CBE", "Aspect", a_CBEs[A]),		# ComboBoxes (editable)
+                ("CBE", "Width", a_CBEs[W]),
+                ("CBE", "Height", a_CBEs[H]),
+                # TXT Result Box with Label
+                # ("TXT", "Result ([*]=W|H/8=0, [~]=W|H/16=0", x)
+            )
+
+            # define my Forms buttons
+            buttonSlv = "Find Result!gtk-find!Find Missing W|H|A:0"
+            buttonCls = "Close Window!gtk-close!Close %s:1" % p.cmdName
+
+            # display my YAD dialog Form window - get responses
+            y = YAD().Form(
+                fields=a_Flds,				# add my fields array to form
+                cols=1,					    # 1 column in Form
+                image='cabview',			# cabview window icon
+                image_on_top=True,			# refers to win icon posn
+                window_icon='cabview',		# cabview launcher icon
+                on_top=True,				# open window ontop of others
+                no_focus=True,              # window wont steal mouse focus
+                plug=False,				    # not a plug in a Paned
+                geometry="250x225-50+50",   # geometry - upper right
+                title=a_Title,				# window title
+                button0=buttonSlv,			# my buttons
+                button1=buttonCls,
+            )
+            #
+            # if cancel button - 'y' = None (exit)
+            # in the bash shell yad returns its
+            # button press numbers as the x=$? var
+            # assigned to a variable after yad exits
+            # that info isn't easily available here
+            # maybe if we do our own subprocess call
+            # to yad - we can get that info from the
+            # subprocess class
+            #
+            if y is None:
+                exit(0)
+            #
+            # else y will be a dict of items = \
+            #   {0: '', 1: '1.33', 2: '480', 3: '0', 4: 'Answer'}
+            # we are interested in y[1-3] as our answers
+            # if xx:xx convert Aspect 16:9 into 1.778 and others
+            # y[0] = FORM:LBL - always 0
+            # y[1] = FORM:CBE - Aspect Ratio - varies
+            # y[2] = FORM:CBE - Width - varies
+            # y[3] = FORM:CBE - Height - varies
+            # y[4] = FORM:CBE - x.format() % (W, H, A) string
+            #   - varies (answer lags by 1 iteration)
+            # print('y[0]='+str(y[0]))
+            # print(str(y))
+            if ':' in y[1]:
+                rvals = y[1].split(':')
+                y[1] = float(int(rvals[0])/int(rvals[1]))
+            else:
+                y[1] = float(y[1])
+
+            # create Video class vid
+            # create vid class with values from Form
+            vid = Video(int(y[W]), int(y[H]), y[A])
+            # solve vid for missing (W or H or A)
+            vid.solve(vid)
+            # create formatted output answer
+            # that is displayed in the Form
+            # TXT box - when the loop repeats
+            # when started the answer box shows
+            # W = 0, H = 0, A = 0.00
+            # which came from the line below
+            # when we vid.solve each time answer
+            # box will have a correct answer
+            x = vid.about()					# string.format initially 0,0,0.00
+            answerLB(vid, x)
+
+
+def answerLB(X, Y):
+    """Display popup window with the answer."""
+
+    '''
+    Alternate means of displaying the aspect ratio answer
+    '''
+    # names = ['', 'AspectRatio', 'Width', 'Height']
+    buf = []
+
+    # first time - create answer display using Text-Info
+    '''
+    if not X.answerCB:
+        X.answerCB = YAD().TextInfo(
+            title="Width/Height/Aspect",
+            text="Found Missing Parameter:\n" +\
+                "Legend:  Mod-16='~',  Mod-8='*'\n" +\
+                "Parameter\t\t\t\t   Value/Mod",
+            geometry="265x165-50+50",
+            listen=True,
+            no_focus=True,
+            no_click=True,
+            on_top=True,
+            no_buttons=True,
+            fixed=False,
+            scroll=False,
+            button="gtk-close:0",
+            timeout_indicator='bottom',
+            timeout=30,
+        )
+    result = 'Width:\t\t\t{}\nHeight:\t\t\t{}\nAspect Ratio:\t\t{:.2f}'.format(
+        str(X.width)+X.width_mod, str(X.height)+X.height_mod, X.aspect)
+    # update with our answer
+    X.answerCB(result, False)
+
+    '''
+    #
+    # list box with 3 lines for W/H/A
+    #
+    l = ('Width', str(X.width)+X.width_mod)
+    buf.append(l)
+    l = ('Height', str(X.height)+X.height_mod)
+    buf.append(l)
+    l = ('Aspect', '{:.2f}'.format(X.aspect))
+    buf.append(l)
+
+    YAD().List(
+        colnames=(("Parameter", "TEXT"), ("Value/Mod", "TEXT")),
+        quoted=True,
+        ontop=True,
+        sep='~',
+        no_focus=True,
+        no_click=True,
+        no_buttons=True,
+        button="gtk-close:0",
+        geometry="275x185-50+50",
+        title="Width/Height/Aspect",
+        text="Found Missing Parameter:\n" +
+            "Legend:  Mod-16='~',  Mod-8='*'",
+        image='cabview',
+        window_icon='cabview',
+        image_on_top=True,
+        undecorated=False,
+        timeout=30,
+        timeout_indicator='bottom',
+        data=buf,
+    )
+
+
+if __name__ == "__main__":
+    main()
