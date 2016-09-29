@@ -63,6 +63,12 @@ function detect {
     1> "$nul" \
     2>> "$tFile"
 }
+
+# main()
+set -o errexit                                          # exit on error
+set -o nounset                                          # no empty vars
+set -o pipefail                                         # fail pipe-errs
+
 #
 # send output of ffmpeg to tmpfile
 # process that with pipes
@@ -89,7 +95,7 @@ else
     tail -1|                                    # last is most popular
     awk '{print "-vf crop=" $2}'                # print sngl crop field
 
-    # remove dummy.mp4 and tmpfile
+  # remove dummy.mp4 and tmpfile
   /bin/rm -f /tmp/dummy.mp4
   /bin/rm -f "$tFile"
 fi

@@ -19,7 +19,7 @@ function die()
 {
   local _STDERR_="/dev/fd/1"
   local exitStatus=${1}; shift
-  
+
   echo -e "${BASH_SOURCE[1]} Died at ${BASH_LINENO[0]} in ${FUNCNAME[1]}()" > \
     ${_STDERR_}
   for i in "$@";
@@ -28,6 +28,11 @@ function die()
   done
   exit "${exitStatus}"
 }
+
+# main()
+set -o errexit                                          # exit on error
+set -o nounset                                          # no empty vars
+set -o pipefail                                         # fail pipe-errs
 
 #
 # if not 2 filenames - die
