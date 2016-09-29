@@ -1,0 +1,350 @@
+#!/usr/bin/env python3
+"""First shot at Video Width/Height/Aspect Ratio Calculator in Python."""
+
+import os.path
+import sys
+from sys import argv, exit
+import readline
+import argparse
+'''
+from sys import version_info
+if version_info[0] < 3:
+    from string import replace          # deprecated in python 3.0+
+'''
+# if sys.version_info[0] < 3:		# python2/3 compatability
+#    input = raw_input
+# in python3 no raw_input - this provides code portability
+raw_input = vars(__builtins__).get('raw_input', input)
+
+HEIGHT = 1
+WIDTH = 2
+ASPECT = 3
+QUIT = 4
+
+#
+# pre-defined variables (GLOBAL)
+#
+myCmdName = os.path.basename(argv[0])       # save my command name (no path)
+myLogFile = '/tmp/'+myCmdName+'.txt'        # my logging filename
+myVersion = 'v0.1.2'
+lastEdit = '2016-09-29'
+lintStatus = True
+defLogLevel = 20
+
+
+class Film:
+    """define values and equations to solve aspect ratio puzzle."""
+
+    def __init__(self, width, height, aspect):
+        """initialize values"""
+        self.width = int(width)
+        self.height = int(height)
+        self.aspect = float(aspect)
+
+    # solve for height - called by solve
+    def findHeight(self):
+        """find height here."""
+        self.height = int(float(self.width/self.aspect))
+        return self.height
+
+    # solve for width - called by solve
+    def findWidth(self):
+        """find width here."""
+        self.width = int(float(self.height*self.aspect))
+        return self.width
+
+    # solve for aspect - called by solve
+    def findAspect(self):
+        """find aspect here."""
+        self.aspect = float(self.width)/float(self.height)
+        return self.aspect
+
+    @staticmethod
+    def solve(self):
+        """solve figures which solution to call."""
+        if self.width and self.aspect and self.height == 0:
+            return self.findHeight()
+
+        if self.height and self.aspect and self.width == 0:
+            return self.findWidth()
+
+        if self.width and self.height and self.aspect == 0:
+            return self.findAspect()
+
+    def about(self):
+        """announce the solutions results."""
+        print('\nWidth={}\nHeight={}\nAspect={}\n'.format(
+            self.width, self.height, self.aspect))
+
+
+def main():
+    """main entry point."""
+    parser = argparse.ArgumentParser(
+        prog=myCmdName,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description='Solve for missing part of Aspect Ratio Equation',
+        epilog=myCmdName + ' ' + myVersion + ' ' + lastEdit
+    )
+    parser.add_argument(
+        '--height',
+        '-H',
+        required=False,
+        type=str,
+        default='0',
+        metavar='',
+        help='The Height of the Video as a whole Num (if known)'
+    ),
+    parser.add_argument(
+        '--width',
+        '-W',
+        required=False,
+        type=str,
+        default='0',
+        metavar='',
+        help='The Width of the Video as a whole Num (if known)'
+    )
+    parser.add_argument(
+        '--aspect',
+        '-A',
+        required=False,
+        type=str,
+        default='0.0',
+        metavar='',
+        help='The Aspect Ratio of the Video as a float Num (if known)'
+    )
+    '''
+     (TODO)
+    parser.add_argument('--logging', '-ll',
+        required=False, type=str, default='20', ,metavar='',
+        help='loglevel=DEBUG|INFO|WARNING|ERROR|CRITICAL')
+    parser.add_argument('--logfile', '-lf',
+        action='store_true', required=False,
+        help='log to '+myLogFile+' instead of the screen')
+    parser.add_argument('--osdFlag', '-of',
+        action='store_true', required=False,
+        help='osdFlag=OnScreenDisplay with notify-send')
+    '''
+    #
+    # split options and non options into args, largs
+    # args = parser.parse_args() just parses args
+    # non-args generate an error
+    #
+    args, largs = parser.parse_known_args()
+
+    #
+    # no largs (filenames left) after argscan
+    # print help and exit
+    #
+    if not largs and len(largs) == 1:
+        parser.print_help()
+        exit(2)
+
+    # we have 2 datas and 1 unknown (Solve)
+
+    if args.width or args.height or args.aspect:
+        # convert Aspect 16:9 into 1.778 and others
+        if ':' in args.aspect:
+            rvals = args.aspect.split(':')
+            args.aspect = float(int(rvals[0])/int(rvals[1]))
+        else:
+            args.aspect = float(args.aspect)
+
+        # create Film class vid
+        # create vid with values
+        vid = Film(int(args.width), int(args.height), args.aspect)
+        vid.solve(vid)							# solve for missing (=0)
+        vid.about()							# print output
+        # raw_input('\nhit return to continue:')
+        # exit(0)
+
+    while True:
+        os.system(['clear', 'cls'][os.name == 'nt'])  # clear users screen
+
+        print("""
+
+
+
+  Solve for:
+  1) Height
+  2) Width
+  3) Aspect
+  4) quit
+    """)
+        '''
+        # stuff from some python install script
+        # sys.stdout.write(__doc__)	# print doc string at code top
+        # scriptDir = os.path.dirname(__file__) or os.curdir
+        # print (os.path.dirname(__file__)) # output was '/home/magoo/.bin'
+        # print (os.curdir) # output was '.'
+        # print (scriptDir)
+        '''
+        # catch no char entered/carriage return
+        # trying to get int("") bombs out
+        # askYesNo("Proceed?", default="yes")
+        # mode = rlinput('Continue', 'Y')
+        mode = getNumeric('Choice:', 'int')
+        if mode == QUIT:
+            exit(0)
+
+        # height/width/aspect
+        elif mode >= HEIGHT and mode <= ASPECT:
+            findMissing(mode)
+            # wait fo <CR> so user can see answer
+            raw_input('\nhit return to continue:')
+
+        # invalid mode entry - try again
+        else:
+            # print('Invalid input: try 1-4')
+            raw_input('Invalid input: try 1-4\nhit return to continue:')
+
+
+def findMissing(mode):
+    """Ask user for needed values and call calculateMissing()."""
+    #
+    # WIDTH  -> need height and aspect
+    # HEIGHT -> need width and aspect
+    # ASPECT -> need width and height
+    #
+    Height = Width = Aspect = 0
+
+    if mode == HEIGHT:
+        Width = getNumeric('Width:', 'int')
+        # Width = int(raw_input("Width:"))
+        Aspect = getAspect()
+
+    elif mode == WIDTH:
+        Height = getNumeric('Height:', 'int')
+        # Height = int(raw_input("Height:"))
+        Aspect = getAspect()
+
+    elif mode == ASPECT:
+        Width = getNumeric('Width:', 'int')
+        Height = getNumeric('Height:', 'int')
+        # Width = int(raw_input("Width:"))
+        # Height = int(raw_input("Height:"))
+
+    vid = Film(Width, Height, Aspect)
+    print(vid.solve(vid))
+    vid.about()
+    # calculateMissing(mode, Height, Width, Aspect)
+
+
+def getAspect():
+    """ask user for aspect ratio."""
+    while True:
+        os.system(['clear', 'cls'][os.name == 'nt'])  # clear users screen
+        print("""
+  1)  4:3 = 1.33:1
+  2) 16:9 = 1.78:1
+  3) 21:9 = 2.33:1
+  4) enter as float x.xx
+  5) enter as xx:xx
+    """)
+        Aspect = getNumeric('Aspect mode:', 'int')
+
+        # print (str(Aspect))
+        # Aspect = int(raw_input("Aspect:"))
+        if Aspect == 1:
+            ar = 1.33
+        elif Aspect == 2:
+            ar = 1.78
+        elif Aspect == 3:
+            ar = 2.33
+        elif Aspect == 4:
+            ar = getNumeric('Aspect #4:', 'float')
+        elif Aspect == 5:
+            artemp = getNumeric('Aspect #5:', 'str')
+            vals = artemp.split(':')
+            ar = float(int(vals[0])/int(vals[1]))
+
+        if Aspect >= 1 and Aspect <= 5:
+            return(float(ar))
+        else:
+            print("Invalid input: try 1-5")
+
+
+def calculateMissing(mode, height, width, aspect):
+    """given 2 of 3 variables figure out the other variable."""
+    if mode == HEIGHT:
+        value = int(float(width/aspect))
+    elif mode == WIDTH:
+        value = int(float(height*aspect))
+    elif mode == ASPECT:
+        value = float(float(width)/float(height))
+
+    # print ('Answer: '+str(value))
+    return value
+
+
+def getNumeric(prompt, return_type):
+    """Get numeric input from user - return when input is proper."""
+    while True:
+        response = raw_input(prompt)
+        try:
+            # if isinstance(response, str) and response.isdigit():
+            if isinstance(response, str) and isnumeric(response):
+                if return_type == 'int':
+                    return int(response)
+                elif return_type == 'float':
+                    return float(response)
+                elif return_type == 'str':
+                    return str(response)
+            else:
+                print("please enter a number:")
+        # except ValueError:
+        except:
+            print("please enter a number:")
+
+
+def isnumeric(value):
+    """Return True if value is numerical digits (minus '-.:')."""
+    return str(value).replace(".", "").\
+        replace("-", "").replace(":", "").isdigit()
+
+
+def askYesNo(question, default="yes"):
+    """Ask the user the given question and their answer."""
+    """
+    'question' is a string that is presented to the user.
+    'default' is the presumed answer if the user just hits <Enter>.
+    It must be 'yes' (the default), 'no' or None (meaning
+       an answer is required of the user).
+
+    The 'answer' return value is one of 'yes' or 'no'.
+    """
+    valid = {"yes": "yes", "y": "yes", "ye": "yes", "no": "no", "n": "no"}
+    if default is None:
+        prompt = " [y/n] "
+    elif default == "yes":
+        prompt = " [Y/n] "
+    elif default == "no":
+        prompt = " [y/N] "
+    else:
+        # raise Error("invalid default answer: '%s'" % default)
+        raise("invalid default answer: '%s'" % default)
+
+    while 1:
+        sys.stdout.write(question + prompt)
+        choice = input().lower()
+        # sys.stdout.write('\n')
+        if default is not None and choice == '':
+            return default
+        elif choice in list(valid.keys()):
+            return valid[choice]
+        else:
+            sys.stdout.write(
+                "Please repond with 'yes' or 'no' " +
+                "(or 'y' or 'n').\n"
+            )
+
+
+def rlinput(prompt, prefill=''):
+    """display prompt and get input from user."""
+    readline.set_startup_hook(lambda: readline.insert_text(prefill))
+    try:
+        return raw_input(prompt)
+    finally:
+        readline.set_startup_hook()
+
+if __name__ == "__main__":
+    main()
