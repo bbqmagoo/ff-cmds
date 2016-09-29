@@ -357,9 +357,7 @@ function scanArgs()
 # http://www.linuxandlife.com/2012/07/use-imagemagick-to-add-watermark-to.html
 # http://www.imagemagick.org/Usage/layers/#convert
 # http://www.imagemagick.org/Usage/annotating/#anno_on
-# hset -o errexit                                          # exit on error
-set -o nounset                                          # no empty vars
-set -o pipefail                                         # fail pipe-errsttp://www.imagemagick.org/Usage/fonts/
+# http://www.imagemagick.org/Usage/fonts/
 # Set transparent background using ImageMagick and commandline prompt
 #   https://stackoverflow.com/questions/9155377/set-transparent-background-using-imagemagick-and-commandline-prompt
 # GraphicsMagick FAQ:
