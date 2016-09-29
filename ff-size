@@ -1,0 +1,632 @@
+#!/usr/bin/env python3
+"""ff-size - display video file parameters of mult files."""
+# -*- coding: utf-8 -*-
+# -*- mode: python -*-
+#
+# 2015-04-15 - added Attributes class to hold and control media data
+# 2016-01-10 - program linted by atom/flake8
+# 2016-01-30 - add hidden column to metatitle output, add dclick action
+# 2016-04-21 - updates for magoo_tools
+#
+from sys import argv, exit
+import re
+from re import search
+import os.path
+import glob
+import argparse
+from magoo.logtools import check_logging_args_argparse, logging
+from magoo.proctools import os_which, os_getstatusoutput
+from yad import YAD
+'''
+from sys import version_info
+if version_info[0] < 3:
+    from string import replace          # deprecated in python 3.0+
+'''
+
+# Contants Radix:1024:KB
+K = 1024
+M = 1024 * K
+G = 1024 * M
+# Contants Radix:1000:kib
+k = 1000
+m = 1000 * k
+g = 1000 * m
+#
+# these should make the code easier
+# to understand and manage
+#
+VFN = 0     # video filename
+OBR = 1     # Overall Bitrate
+NBR = 2     # Nominal Bitrate
+VFC = 3     # video File Container
+VDR = 4     # Video Duration
+VSZ = 5     # Video XY Size
+VCD = 6     # Video Codec
+VBR = 7     # Video Bitrate
+VFR = 8     # Video Frame RateABR = 3
+VAR = 9     # Video Aspect Ratio
+ACD = 10    # Audio Codec
+VAF = 11    # Audio Frequency
+VSR = 12    # Audio Sample Rate
+VAC = 13    # Audio Channels
+ASZ = 14    # Audio Stream Size
+VFS = 15    # Vid File Size
+VFT = 16    # Vid File Title
+VAN = 17    # Audio Nominal BR
+
+
+class Program:
+    """this class hold common program info for this program."""
+
+    def __init__(self):
+        """Init members of class."""
+        self.cmdName = os.path.basename(argv[0])     # save my cmdname
+        self.logFile = '/tmp/'+self.cmdName+'.log'   # my logging filename
+        self.defLogLevel = 20                        # default log lvl (10)
+        self.version = "v0.4.0"
+        self.lastEdit = "2016-04-21"
+        self.lintStatus = True
+        self.PATH = "/home/magoo/.bin:"\
+            + "/home/magoo/.bin/ff:"\
+            + "/usr/local/bin:"\
+            + "/usr/local/bin:/usr/bin:/bin"
+        self.args = ""                  # command args
+        self.largs = ""                 # command args
+        self.titleFlag = False          # not title mode by default
+        self.images = {                 # usefull icons
+            '0': 'FFmpeg',
+            '1': 'pyrenamer',
+            '2': 'cabview',
+        }
+
+
+#
+# corral and control video file attributes
+#
+class Attributes:
+    """Holds video file attributes as object values."""
+
+    def __init__(self):
+        """actual files dictionary of video parameters (stored by index)."""
+        self.vData = {
+            VFN: '', OBR: '', NBR: '', VFC: '', VDR: '', VSZ: '', VCD: '',
+            VBR: '', VFR: '', VAR: '', ACD: '', VAF: '', VSR: '', VAC: '',
+            ASZ: '', VFS: '', VFT: '', VAN: '',
+        }
+        # dictionary descriptions for data (these don't change)
+        self.vDesc = {
+            VFN: 'Vid Filename', OBR: 'Overall Bitrate',
+            NBR: 'Nominal Bitrate', VFC: 'Container',
+            VDR: 'Vid Duration', VSZ: 'Screen Size',
+            VCD: 'Vid Codec', VBR: 'Vid Bitrate',
+            VFR: 'Frame Rate', VAR: 'Aspect Ratio',
+            ACD: 'Audio Codec', VAF: 'Aud Frequency',
+            VSR: 'Sample Rate', VAC: 'Aud Channels',
+            ASZ: 'Aud Strm Size', VFS: 'Vid File Size',
+            VFT: 'Vid File Title', VAN: 'Audio Nom BR',
+        }
+        self.normalized = False  # normalize flag
+        self.yad = []            # yad work array
+
+    def reset(self):
+        """Reset class data fields back to 0/null"""
+        for i in range(0, len(self.vData)):
+            self.vData[i] = ''  # clear work fields
+
+    def dump(self):
+        """Dump class data for analysis"""
+        for i in range(0, len(self.vData)):
+            print((self.vdesc[i] + ' = ' + self.vData[i]))
+
+    def osd(self):
+        """Build and return data line for the gui-displaypath."""
+        # normalize/beautify data
+        data = (
+            self.vData[VSZ],
+            self.vData[VDR],
+            '%s Kb' % (self.vData[VBR]),
+            '%s Kb' % (self.vData[VAF]),
+            '%s M' % (self.vData[VFS]),
+            self.vData[VFR],
+            self.vData[VAR],
+            str.replace(self.vData[VFN], '&', 'and'))
+        return data
+
+    def osdt(self):
+        """Build and return data line for the gui-display title-line."""
+        # look for SxxExx
+        mRex = re.compile("([\w][\d][\d][\w][\d][\d])", re.IGNORECASE)
+        # m = search("([\w][\d][\d][\w][\d][\d])", file)
+        m = search(mRex, self.vData[VFN])
+        if m is not 'None':
+            g = m.groups()
+            epiShow = str(g[0])
+            logging.debug('epiShow=' + epiShow)
+        else:
+            epiShow = 'SxxExx'          # failed to find Episode info
+        if self.vData[VFT] == "":
+            self.vData[VFT] = 'None Found'
+        data = (epiShow, self.vData[VFT], self.vData[VFN])      # VFN hidden
+        return(data)
+
+    def print_line(self):
+        """Console printed info-line output."""
+        data = ('{:<8}|{:<8}|{:<4} kbs|{:<4}k|{:<4}M|{:<5}|{:<5}|{}'.format(
+            self.vData[VSZ], self.vData[VDR], self.vData[VBR],
+            self.vData[VAF], self.vData[VFS], self.vData[VFR],
+            self.vData[VAR], self.vData[VFN][0:25]))
+        print(data)
+
+    def normalize(self):
+        """Normalize the data for human consumption."""
+        if self.normalized:
+            return
+        logging.debug('NominalBitrate=' + self.vData[NBR])
+        if len(self.vData[VBR]) < 1:
+            if len(self.vData[NBR]) > 3:   # if nominal bitrate - use that
+                self.vData[VAF] = int(self.vData[OBR])-int(self.vData[NBR])
+                self.vData[VAF] = str(self.vData[VAF])
+                self.vData[VBR] = str(self.vData[NBR])
+                # tmpOut = ffmpeg_get_bitrates(file)
+                # (vData[VBR],vData[VAF]) = tmpOut.split(':')
+
+            # if still bad - brute force
+            if len(self.vData[VBR]) < 1 or len(self.vData[VAF]) < 1:
+                self.vData[VBR] = int(self.vData[OBR])-128000
+                self.vData[VBR] = str(self.vData[VBR])
+                self.vData[VAF] = str(128000)
+                logging.debug(
+                    'FIX-BITRATE='+self.vData[VBR]+' AFREQ='+self.vData[VAF])
+        #
+        # Some files had no audio BitRate value
+        # but had BitRate_Nominal instead
+        # assign this value to BitRate
+        # if BitRate_Nominal isn't Valid
+        # we brute force it to 128000
+        #
+        if len(self.vData[VAF]) < 1:
+            self.vData[VAF] = self.vData[VAN] or str(128000)
+        #
+        # wierd deal where SRATE or Chanls had extra fields
+        #  48000 / 24000 - trim field after the ' /'
+        #
+        if len(self.vData[VSR]) > 7 and '/' in self.vData[VSR]:
+            self.vData[VSR] =\
+                self.vData[VSR][0:str.index(self.vData[VSR], ' /')]
+            logging.debug('srate fixed: '+self.vData[VSR])
+        #
+        # I actually saw a rare occurence of no file duration set anywhere
+        # we can use what we know - at 315k video bitrate use 2.885 factor
+        # I will mult 2.885 * known vbr and divide by 315k to get duration
+        # from - estimated_size mb = ff.duration * 2.885 / 60
+        # we get - duration = size mb / 2.885 * 60
+        #
+        if len(self.vData[VDR]) < 1:
+            # figure out factor from BR and 315k
+            newFactor = float(int(self.vData[VBR]) * 2.885 / 315000)
+            # logging.info('VFS='+self.vData[VFS])
+            # calc Duration
+            newDUR = float(int(self.vData[VFS])/M) / float(newFactor) * 60
+            # logging.info('newVDR='+str(newDUR))
+            #
+            # convert the new duration to hh:mm:ss for human readability
+            #
+            hh = mm = ss = 0                        # zero out
+            hh = round((newDUR // 3600))
+            mm = round(((newDUR - (hh * 3600)) // 60))
+            ss = round(newDUR - (hh * 3600 + mm * 60))
+            if hh > 0:                  # format duration and store in array
+                # splat denotes calulated data
+                newDURstr = '{}h {}mn {}s*'.format(hh, mm, ss)
+            else:
+                newDURstr = '{}mn {}s*'.format(mm, ss)
+            self.vData[VDR] = newDURstr
+            # logging.info(str(hh)+':'+str(mm)+':'+str(ss))
+        if not self.vData[VFR]:             # if no frame rate - set default
+            self.vData[VFR] = '23.976*'     # most likely 23.976
+        #
+        # normalize and build my output strings
+        # divide by 1000 - knock off 3 digits - add 'k' or 'M'
+        #
+        self.vData[VBR] = str(int(self.vData[VBR])/1000)
+        self.vData[VBR] = int(float(self.vData[VBR]))
+        logging.debug(str(self.vData[VAF]))
+        self.vData[VAF] = str(int(self.vData[VAF])/1000)
+        self.vData[VAF] = int(float(self.vData[VAF]))
+        self.vData[VFS] = str(int(self.vData[VFS])/1000000)  # format as MB
+        self.vData[VFS] = int(float(self.vData[VFS]))
+        self.normalized = True
+        if '.' in self.vData[VAR] and ':1' in self.vData[VAR]:
+            self.vData[VAR] = self.vData[VAR].replace(':1', '')
+
+# realize my classes
+v = Attributes()
+p = Program()
+
+
+def main():
+    """Our program starts executing here."""
+    global v
+    global p
+
+    #
+    # basic argparse skeleton (customize look of help with custom formatter)
+    # web=https://argparse.googlecode.com/svn/trunk/doc/ArgumentParser.html
+    #
+
+    parser = argparse.ArgumentParser(
+        prog=p.cmdName,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description='Print details of video file(s)',
+        epilog=p.cmdName + ' ' + p.version + ' ' + p.lastEdit
+    )
+    parser.add_argument(
+        '--metatitle',
+        '-mt',
+        action='store_true',
+        required=False,
+        help='metatitle = Display file(s) metafile titles'
+    )
+    parser.add_argument(
+        '--osdFlag',
+        '-of', action='store_true',
+        required=False,
+        help='osdFlag=Display file(s) in a yad window'
+    )
+    parser.add_argument(
+        '--logging',
+        '-ll',
+        required=False,
+        type=str,
+        default='20',
+        help='loglevel=DEBUG|INFO|WARNING|ERROR|CRITICAL',
+        metavar=''
+    )
+    parser.add_argument(
+        '--logfile',
+        '-lf',
+        action='store_true',
+        required=False,
+        help='log to '+p.logFile+' instead of the screen'
+    )
+    #
+    # split options and non options into args, largs
+    # args = parser.parse_args() just parses args
+    # bad args generate an error
+    #
+    p.args, p.largs = parser.parse_known_args()
+    # get loglevel and start logging
+    check_logging_args_argparse(p.args, p.logFile)
+
+    logging.debug('log level=' + str(p.args.logging))
+    logging.debug('metatitle=' + ('False', 'True')[p.args.metatitle])
+
+    # establish my path
+    os.environ['PATH'] = p.PATH
+    # myPATH = os.environ['PATH']
+    # print(myPATH)
+
+    #
+    # no largs (filenames left) after argscan
+    # print help and exit
+    #
+    if not p.largs:
+        parser.print_help()
+        exit(2)
+
+    #
+    # trim the URI header off
+    # if passed in by YAD Drag N Drop
+    #
+    if 'file://' in p.largs[0]:
+        temp = p.largs[0]
+        p.largs[0] = temp[len('file://'):]
+
+    #
+    # command line was single arg and a directory
+    # glob and get files in dir
+    #
+    if len(p.largs) == 1 and os.path.isdir(p.largs[0]):
+        '''
+        Python glob needs to escape Sq Brackets[]
+        S01.TV-[2010] would need to be S01.TV-[[]2010[]]
+        instead I will just cd into dirArg and glob there
+        '''
+        dirArg = p.largs[0]                 # save dir name arg
+        logging.debug('dirArg='+dirArg)
+        p.largs = []                        # reset largs to ""
+        dirArg = dirArg.rstrip('/')         # strip trailing slash if there
+        os.chdir(dirArg)                    # glob was failing sq brackets
+        p.largs = glob.glob('*')            # glob * in dir
+        logging.debug('# of p.largs='+str(len(p.largs)))
+        sort_nicely(p.largs)
+    else:
+        dirArg = os.getcwd()
+        dirArg = dirArg.rstrip('/')
+    #
+    # lets get the CWD parent of the files
+    #
+    if dirArg.count('/') > 1:       # < 2 '/' only 1 dir - not full path
+        filesParentDir = dirArg[dirArg.rindex('/')+1:]
+    else:
+        filesParentDir = dirArg
+    logging.debug('files parent='+filesParentDir)
+    #
+    # return qualified path/filename for
+    # mediainfo
+    #
+    myMediaInfo = os_which('mediainfo')
+    logging.debug('mediainfo=' + myMediaInfo)
+
+    # set osd output based on command name
+    if 'ff-metatitle' in p.cmdName or p.args.metatitle:
+        p.args.metatitle = True
+        p.titleFlag = True
+        logging.debug('metatitle in command name')
+        logging.debug('metatitle=' + ('False', 'True')[p.args.metatitle])
+
+    # set osd output based on command name
+    if 'ff-size.osd' in p.cmdName or p.args.osdFlag:
+        p.args.osdFlag = True
+        logging.debug('osd in command name')
+        logging.debug('osd=' + ('False', 'True')[p.args.osdFlag])
+
+    #
+    # print report headers (if console output)
+    #
+    if not p.args.osdFlag:
+        print_header()          # maybe buffer data and print later
+
+    #
+    # loop over files on command line
+    #
+    totalSize = 0
+    totalFiles = 0
+
+    for file in p.largs:
+        #
+        # if this is a file and also a video file (process it)
+        #
+        logging.debug('file=' + file)
+        if 'file://' in file:
+            file = file[len('file://'):]
+            logging.debug('URI-trim=' + file)
+        if os.path.isfile(file) and validate_video(file):
+            #
+            # collect the mediainfo DATA from each file
+            # (General,Video,Audio)
+            #
+            # this is tricky - Need \n to seperate
+            # General/Audio/Video tracks be sure to
+            # get all of the '~' so that we get 13
+            # individual fields
+            #
+            myQuery = (
+                "General;%OverallBitRate%~%FileSize%~%Duration/String2%~" +
+                "%Title%~\nVideo;%Width%x%Height%~%BitRate%~%FrameRate%~" +
+                "%AspectRatio/String%~%BitRate_Nominal%~\nAudio;%BitRate%~" +
+                "%SamplingRate%~%Channels%~%Format%~%BitRate_Nominal%")
+
+            sysCmd = '{} --Inform=\"{}\" \"{}\"'.format(
+                myMediaInfo,
+                myQuery,
+                file
+            )
+            tmpOut = os_getstatusoutput(sysCmd, status=False).rstrip()
+            #
+            # some video files had two audio streams and
+            # returned too many audio fields - find the
+            # seperator after the correct number of fields
+            # and extract the fields I need to fix problem
+            #
+            fieldCount = tmpOut.count('~')
+            if fieldCount > 13:
+                # get index list of seperator chars
+                pos_list = find_ch_offsets('~', tmpOut)
+                logging.debug(
+                    'list='+str(pos_list)+'len list='+str(len(pos_list)))
+                logging.debug('Data='+str(tmpOut))
+                tmpOut = tmpOut[0:pos_list[13]]     # keep the fields I needed
+            # logging.info('Fields='+tmpOut)
+            # TestOut = parse_values(tmpOut,'~')
+            # logging.info('Test='+TestOut)
+            # split/assign values to meaningful named variables
+            #
+            v.reset()                           # reset class data
+            if '/' in file:                     # director name prepended
+                fpath = file                    # save all
+                file = os.path.basename(file)   # keep filename for printout
+                fpath = fpath.replace(file, '')  # remember path
+                fpath = fpath.rstrip('/')       # strip trailing /
+            else:
+                fpath = os.getcwd()
+
+            logging.info("fpath={}".format(fpath))
+            if fieldCount >= 13:                # test for valid field count
+                v.vData[VFN] = file
+                (v.vData[OBR], v.vData[VFS], v.vData[VDR], v.vData[VFT],
+                    v.vData[VSZ], v.vData[VBR], v.vData[VFR], v.vData[VAR],
+                    v.vData[NBR], v.vData[VAF], v.vData[VSR], v.vData[VAC],
+                    v.vData[ACD], v.vData[VAN]) = tmpOut.split('~')
+
+            else:                   # invalid fields - skip file
+                continue
+            #
+            # data collected from mediainfo - now lets do something with it
+            #
+            v.normalize()                       # normalize the data
+            totalSize += int(v.vData[VFS])      # add fsize to total
+            totalFiles += 1                     # number of files
+
+            #
+            # print metafile titles (of metafile title mode and not yad
+            #
+            # extract SxxExx string from filename (season and episode)
+            #
+            if 'ff-metatitle' in p.cmdName or p.titleFlag or p.args.metatitle:
+                data = v.osdt()             # build title line
+                if p.args.osdFlag:
+                    v.yad.append(data)      # append to yad input array
+                else:
+                    # field 2 is hidden, print 0-1
+                    # print('%s %s' % (data[0], data[1]))
+                    # print if not o-s-d
+                    print('{} {}'.format(data[0], data[1]))
+            else:
+                #
+                # add to yad or print size info
+                #
+                if p.args.osdFlag:
+                    data = v.osd()          # build on-screen-display line
+                    v.yad.append(data)      # append to yad input array
+                else:
+                    v.print_line()          # print a ff-size info-line
+        #
+        # end of os.path.isfile() and validate_video()
+        #
+        v.normalized = False                # reset for next file
+    #
+    # end of for loop
+    #
+    if p.args.osdFlag:
+        buttonClose = "Close Window!Gnome-colors-window-close!Close window:0"
+        logging.debug('len yad=' + str(len(v.yad)))
+        # yadTitle = ('%s %s: %d Files found, Space Used: %d MiB' %
+        yadTitle = '{} {}: {:d} Files found, Space Used: {:d} MiB'.format(
+            p.cmdName,
+            filesParentDir,
+            totalFiles, totalSize
+        )
+        if p.args.metatitle:
+            YAD().List(colnames=(
+                ("Episode", "TEXT"),
+                ("Metatitle", "TEXT"),
+                ("FnHidden", "TEXT")),
+                sep="~",
+                print_col=3,                        # return only fname
+                hide_col=3,                         # full filename
+                tooltip_col=3,                      # text for tooltip
+                quoted=True,
+                title=yadTitle,
+                width=550,
+                height=450,
+                image='cabview',
+                image_on_top=True,                  # refers to win icon posn
+                window_icon=p.images.get('2', ""),  # cabview launcher icon
+                button=buttonClose,
+                dclick_action='ff-dclick snappy+fpath',  # dblclick with args
+                data=v.yad,
+            )
+        else:
+            YAD().List(
+                colnames=(
+                    ("Screen", "TEXT"),             # column names ...
+                    ("Duration", "TEXT"),
+                    ("Bitrate", "TEXT"),
+                    ("Srate", "TEXT"),
+                    ("Size", "TEXT"),
+                    ("Frame", "TEXT"),
+                    ("Aspect", "TEXT"),
+                    ("Filename", "TEXT")),
+                print_col=8,                        # return only fname
+                tooltip_col=8,                      # text for tooltip
+                quoted=True,                        # quote output arguments
+                sep="~",
+                title=yadTitle,                     # window title
+                geometry="800x600-50+50",           # upper right corner
+                image='cabview',                    # cabview window icon
+                image_on_top=True,                  # refers to win icon posn
+                window_icon=p.images.get('2', ""),  # cabview launcher icon
+                button=buttonClose,                 # button with tooltip/close
+                on_top=False,                       # place window above others
+                dclick_action='ff-dclick snappy:'+fpath,  # dblclick with args
+                # text & print stuff (x=yad ...)
+                # hide_col=8,                       # works, hide that column
+                # ellipsize='middle',
+                # expander='Click to toggle data display',      # works
+                undecorated=False,         # no window title decor - False
+                data=v.yad,                # our buffer of lines of data
+            )
+    else:
+        # print('%s %s: %d Files found, Space Used: %d MiB' %
+        print('{} {}: {:d} Files found, Space Used: {:d} MiB'.format(
+            p.cmdName,
+            filesParentDir,
+            totalFiles,
+            totalSize)
+        )
+
+
+def parse_values(line, token):
+    """Parse a string using seperator and return values to token/string."""
+    vals = []
+    out = ""
+
+    (vals) = line.split(token)
+    for p in vals:
+        p = p or ""           # keep value if value or set to ""
+    if out == "":
+        out = p               # build return string (1st time)
+    else:
+        out = ":".join((out, p))  # build return string (all the rest)
+    return(out)
+
+
+def find_ch_offsets(ch, strIn):
+    """Return list of offsets of all occurences of ch in strIn."""
+    pos = []
+
+    for i in range(len(strIn)):             # for all chars in string
+        if ch == strIn[i]:                  # if = ch
+            pos.append(i)                   # append the index offset to list
+    return(pos)
+
+
+def validate_video(fileIn):
+    """Validate a file against a dict of extents, good return(True)."""
+    Extents = {
+        ".mp4": True, ".mkv": True, ".avi": True, ".ogg": True,
+        ".m4v": True, ".mov": True, ".flv": True, ".wmv": True,
+        ".vob": True, ".ts": True, ".mpg": True,
+    }
+    (fileIn_base, fileIn_ext) = os.path.splitext(fileIn)
+    # def=False, good lookup=True
+    return(Extents.get(fileIn_ext, False))
+
+
+def sort_nicely(l):
+    """Sort the given list in the way that humans expect."""
+    convert = lambda text: int(text) if text.isdigit() else text
+    alphanum_key = lambda key: [convert(c) for c in re.split('([0-9]+)', key)]
+    l.sort(key=alphanum_key)
+
+
+def print_header():
+    """print report headers."""
+    if 'v.ff-metatitle' in p.cmdName or p.titleFlag or p.args.metatitle:
+        print('{}'.format('Video File Metadata Titles'))
+        print('{}'.format("=" * 79))
+    else:
+        '''
+        012346789012345678901234567890123456789012345678901234567890123456789012345
+                10        20        30        40        50        60        70
+        '''
+        myLine = ('{:<8}|{:<8}|{:<4}|{:<4}|{:<5}|{:<6}|{:<5}|{}'.format(
+            "Screen",
+            "Duration",
+            " BitRate",
+            "SRate",
+            "Size",
+            "Frame",
+            "Aspct",
+            "FileName")
+        )
+        print(myLine)
+
+        myLine = "========|========|========|=====|" \
+            + "=====|======|=====|========================="
+        print(myLine)
+
+
+if __name__ == "__main__":
+    main()
