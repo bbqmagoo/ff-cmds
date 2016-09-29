@@ -1,0 +1,467 @@
+#!/usr/bin/env python3
+"""Analyze video files and report possible space reclaimed by re-coding."""
+from sys import argv, exit
+import re
+import os.path  # added 09-09-14 (magoo) for extent removal
+import glob
+import argparse
+from magoo.logtools import check_logging_args_argparse, logging
+from magoo.proctools import os_which, os_getstatusoutput, os_popen
+from yad import YAD
+
+"""
+analyze file(s) or dir of file(s) and report
+filenames, size and (315k/64k transcoded size)
+give totals and potential reclaimed disk space
+at the end.
+
+2016-01-09 - program linted by atom/flake8 2016-01-09
+2016-01-13 - add 2 buttons to call recode and kill it
+2016-01-27 - add multiselect fname return on close btn
+2016-04-22 - modify code for magoo_tools
+"""
+
+# Constants Radix 1024 KiB
+K = 1024
+M = 1024 * K
+G = 1024 * M
+# Constants Radix 1000 KB
+k = 1000
+m = 1000 * k
+g = 1000 * m
+
+
+# information about this program (cmdname, edit date, version ...)
+class Program:
+    """This class hold common program info for this program."""
+
+    def __init__(self):
+        """this class holds common program info for this program."""
+        self.cmdName = os.path.basename(argv[0])  # save my cmdname (no path)
+        self.logFile = '/tmp/' + self.cmdName+'.log'  # my logging filename
+        self.defLogLevel = 20				# default log level (INFO)
+        self.version = "v0.2.4"				#
+        self.lastEdit = "2016-09-29"		#
+        self.lintStatus = True              # been linted by flake8
+        self.PATH = "/home/magoo/.bin:"\
+            + "/home/magoo/.bin/ff:"\
+            + "/usr/local/bin:"\
+            + "/usr/local/bin:/usr/bin:/bin"
+        self.args = ""					# command args
+        self.largs = ""					# command files
+        self.mediaInfo = ""				# mediainfo command
+        self.yadReturn = ""             # files returned by YAD
+        self.images = {					# path to some icons
+            '0': '/usr/share/icons/FFmpeg_32x32.png',
+            '1': '/usr/share/icons/pyrenamer_32x32.png',
+            '2': '/usr/share/icons/cab_view.png',
+            '3': '/usr/share/icons/FFmpeg_rev_32x32.png',
+            '4': '/usr/share/icons/FFmpeg_alt_32x32.png',
+        }
+
+'''
+#
+# icon stuff
+# path to hicolor: /usr/share/icons/hicolor/{scalable,16x16,32x32,...}
+# place icon-name.svg in scalable directory
+# run command gtk-update-icon-cache /usr/share/icons/hicolor
+# to update the cache - icon now findable as icon-name
+# Inkscape can be used to create svg vector files
+#
+# Icon Theme Specification:
+#   http://standards.freedesktop.org/icon-theme-spec/icon-theme-spec-latest.html#install_icons
+# How to define an icon for a Gedit plugin written in Python:
+#   https://stackoverflow.com/questions/5792437/how-to-define-an-icon-for-a-gedit-plugin-written-in-python
+# Using SVG For Flexible, Scalable, and Fun Backgrounds, Part I & II:
+#   http://alistapart.com/article/using-svg-for-flexible-scalable-and-fun-backgrounds-part-i
+#   http://alistapart.com/article/using-svg-for-flexible-scalable-and-fun-backgrounds-part-ii
+# python scour:
+#   http://www.codedread.com/scour/
+# Openclipart:
+#   https://openclipart.org/
+# Convert PNG to SVG:
+#   https://stackoverflow.com/questions/1861382/convert-png-to-svg
+# Category:SVG icons
+#   https://commons.wikimedia.org/wiki/Category:SVG_icons
+#
+'''
+
+"""create program class."""
+p = Program()
+
+
+def main():
+    """Our program entry execution point."""
+    global p
+    yadBuf = []
+
+    #
+    # basic argparse skeleton (customize look of help with custom formatter)
+    # web=https://argparse.googlecode.com/svn/trunk/doc/ArgumentParser.html
+    #
+
+    parser = argparse.ArgumentParser(
+        prog=p.cmdName,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description='Print recoding details of video file(s)',
+        epilog=p.cmdName + ' ' + p.version + ' ' + p.lastEdit
+    )
+    parser.add_argument(
+        '--osdFlag',
+        '-of',
+        action='store_true',
+        required=False,
+        help='osdFlag = Display file result(s) in a yad window'
+    )
+    parser.add_argument(
+        '--logging',
+        '-ll',
+        required=False,
+        type=str,
+        default='20',
+        help='loglevel=DEBUG|INFO|WARNING|ERROR|CRITICAL', metavar=''
+    )
+    parser.add_argument(
+        '--logfile',
+        '-lf',
+        action='store_true',
+        required=False,
+        help='log to ' + p.logFile + ' instead of the screen'
+    )
+
+    #
+    # split options and non options into args, largs
+    # args = parser.parse_args() just parses args - nonargs generate an error
+    #
+    p.args, p.largs = parser.parse_known_args()
+    check_logging_args_argparse(p.args, p.logFile)  # get loglvl, init logging
+
+    logging.debug('log level=' + str(p.args.logging))
+
+    # establish my path
+    os.environ['PATH'] = p.PATH
+    # myPATH = os.environ['PATH']
+    # print(myPATH)
+
+    #
+    # no largs (filenames left) after argscan
+    # print help and exit
+    #
+    if not p.largs:
+        parser.print_help()
+        exit(2)
+
+    #
+    # trim the URI header off
+    # if passed in by YAD Drag N Drop
+    #
+    if 'file://' in p.largs[0]:
+        temp = p.largs[0]
+        p.largs[0] = temp[len('file://'):]
+
+    #
+    # command line was single arg and a directory
+    #
+    if len(p.largs) == 1 and os.path.isdir(p.largs[0]):	 # glob and get files
+        """
+        Python glob needs to escape Sq Brackets []
+        S01.TV-[2010] would need to be S01.TV-[[]2010[]]
+        instead I will just cd into dirArg and glob there
+        """
+        dirArg = p.largs[0]						# save dir name arg
+        logging.debug('dirArg='+dirArg)
+        p.largs = []						# reset largs to ""
+        dirArg = dirArg.rstrip('/')			# strip trailing slash if there
+        os.chdir(dirArg)					# glob was failing sq brackets
+        p.largs = glob.glob('*')			# glob * in dir
+        logging.debug('# of p.largs='+str(len(p.largs)))
+        sort_nicely(p.largs)
+        # logging.info('files: '+str(p.largs))
+    else:
+        dirArg = os.getcwd()
+        dirArg = dirArg.rstrip('/')
+
+    #
+    # lets get the CWD parent of the files
+    #
+    if dirArg.count('/') > 1:			# < 2 '/' only 1 dir - not full path
+        filesParentDir = dirArg[dirArg.rindex('/')+1:]
+    else:
+        filesParentDir = dirArg
+    logging.debug('files parent='+filesParentDir)
+
+    #
+    # return qualified path/filename for
+    # mediainfo
+    #
+    p.mediaInfo = os_which('mediainfo')
+    logging.debug('mediainfo='+p.mediaInfo)
+
+    # headers not needed if gui list dialog
+    # otherwise print headers
+    if not p.args.osdFlag:
+        print('{:<44}{:>10}{:>10}{:>10}'.format(		# columns
+            'Video-Filename', 'Size', 'Trans', 'Freed'))
+        print('{:<45}{:<10}{:<10}{:<10}'.format(		# header line
+            '='*44+'|', '='*9+'|', '='*9+'|', '='*9))
+
+    sizeT = sizeO = sizeF = 0				# init totals counters
+
+    for f in p.largs:
+        # test for valid video file too
+        if os.path.isdir(f) or not validate_video(f):  # oops - skip dirs
+            continue						# and skip non-video files
+
+        line = get_mediainfo(f)				# fetch info about file
+        (fSize, tLen, numSec, fHxW, fRate, fDur) = line.split('~')
+        # logging.info('nsec='+numSec)
+        nSize = calc_video_size(315000, 64, numSec) 	# calculate new size
+        dSize = int(fSize) - int(nSize)			# difference in file sizes
+        if dSize <= 100000:					# zero if negative or small
+            dSize = 0
+        # if not gui - print line
+        if not p.args.osdFlag:
+            print('{:<44}{:>10}{:>10}{:>10}'.format(		# print a line
+                f[0:44],					# filename
+                phr(int(fSize), 1),				# size orig size
+                phr(int(nSize), 1),				# new transcoded size
+                phr(dSize, 1)))					# difference
+        else:
+            # else create line and append to buffer
+            line = bldYadLine(f, fSize, nSize, dSize)  # add line to buffer
+            yadBuf.append(line)				# append to yad buffer array
+
+        sizeO += int(fSize)					# increment totals
+        sizeT += int(nSize)
+        sizeF += int(fSize) - int(nSize)
+    #
+    # end of for loop
+    #
+
+    # footers and totals not needed if gui list dialog
+    if not p.args.osdFlag:
+        print('{:<45}{:<10}{:<10}{:<10}'.format(    # footer line
+            '='*44+'|', '='*9+'|', '='*9+'|', '='*9))
+        print('{:<44}{:>10}{:>10}{:>10}'.format(    # totals line
+            ' '*44,
+            phr(sizeO),
+            phr(sizeT),
+            phr(sizeF)))
+    else:
+        # create title for gui list dialog
+        yadTitle = "{}: {}  Orig={}  New:{}  Freed={}".format(
+            p.cmdName,
+            os.path.basename(dirArg),
+            phr(sizeO),
+            phr(sizeT),
+            phr(sizeF)
+        )
+        # display the gui list dialog
+        displayYad(yadTitle, yadBuf)
+
+
+def bldYadLine(f, fs, ns, ds):
+    """create a line to append to yad buffer for list dialog."""
+    '''
+    data = '{}, {}, {}, {}].format(
+        sanitizeLine(f),
+        phr(int(fs), 1),
+        phr(int(ns), 1),
+        phr(ds, 1)
+    )
+    '''
+    data = (
+        sanitizeLine(f),
+        phr(int(fs), 1),
+        phr(int(ns), 1),
+        phr(ds, 1)
+    )
+    return(data)
+
+
+def displayYad(title, buf):
+    """Calls YAD to display list dialog on-screen."""
+    # new test code
+    #
+    # for f in S01E*.*;do ff-drop-sh enc $f > /dev/null 2>&1; done
+    # set the text,icon,tooltip,command and
+    # logfile name for the transcode button
+    #
+    #      butn text   icon    tool-tip text        actual command
+    # window NOT closed - ff-recode-dir called by button - all files processed
+    buttonCommand =\
+        "Recode-All-Files!FFmpeg!ffmpeg-recode-all-files:nohup ff-recode-dir"
+    # close window - selected files processed by ff-recode-dir
+    buttonSelect =\
+        "Recode-Selected-Files!FFmpeg!ffmpeg-recode-selected-files:0"
+    # close window - no further action
+    buttonClose =\
+        "Close-Window!Gnome-colors-window-close!Close window:2"
+    # window NOT closed - ff-kill-recode called by button
+    buttonKill =\
+        "Kill-Recode!cancel!Kill-errant-recode:ff-kill-recode -e"
+    '''
+    dialogText =\
+        "[Recode-Files] | [Recode-Selected]=Recode All / Selected, " +\
+        "[Kill-Recode], [Close-Window]"
+    '''
+    dialogText =\
+        "<b>[<u>Recode-Files</u>]</b> = <i>Recode-All-Files</i>\n" +\
+        "<b>[<u>Recode-Selected</u>]</b> = <i>Recode-Selected</i>\n" +\
+        "<b>[<u>Kill-Recode</u>]</b> = <i>Kill-Current-Recode</i>\n" +\
+        "<b>[<u>Close-Window</u>]</b> = <i>Cancel-and-Exit</i>"
+    # end new test code
+    '''
+    # List Dialog (call definition) from YAD class:
+        /usr/local/lib/python3.4/dist.packages/yad.py
+
+    def List(self, colnames=[], boolstyle=None, sep='|', multi=False,
+    editable=False, no_headers=False, no_click=False, print_all=False,
+    print_col=0, hide_col=None, expand_col=0, search_col=0, limit=None,
+    ellipsize=None, dclick_action=None, regex=None, listen=False,
+    quoted=False, data=[], plug=False, tooltip_col=None, **kwargs):
+    '''
+    p.yadReturn = YAD().List(
+        colnames=(
+            ("VideoFilename", "TEXT"),  # row titles
+            ("OrigSize", "TEXT"),
+            ("ReCodeSz", "TEXT"),
+            ("Difference", "TEXT")),
+        sep='~',                        # out separator
+        multi=True,                     # multi select
+        print_col=1,                    # return only fname
+        quoted=True,                    # quoted '' output
+        data=buf,                       # input data
+        tooltip_col=1,                  # fnames are tooltips
+        title=title,                    # my title
+        text=dialogText,                # user help
+        button0=buttonClose,            # my buttons
+        button1=buttonSelect,
+        button2=buttonCommand,
+        button3=buttonKill,
+        geometry="750x500-50+50",       # my geometry
+        image='cabview',				# cabview svg window image
+        image_on_top=True,			    # refers to win icon posn
+        window_icon='cabview',			# cabview svg launcher icon
+        no_focus=True,                  # dont steal mouse focus
+        on_top=False,                   # place window on-top
+        undecorated=False,              # window mgr decorations
+    )
+    #
+    # some List lines have been clicked (selected)
+    # and the CloseWin button was clicked.  We get
+    # back an ['1', '2', '3'] array of filenames to
+    # convert into a string and pass to ff-recode-dir.
+    #
+    if p.yadReturn:
+        logging.debug(str(p.yadReturn))
+        # cmdStr = "nohup {} -e %s &" % ' '.join(p.yadReturn)
+        cmdStr = 'nohup ff-recode-dir -e {} &'.format(
+            os_which('ff-recode-dir'),
+            ' '.join(p.yadReturn)
+        )
+        # print(cmdStr)
+        # os_popen(cmdStr)                          # run the command detached
+        os_popen(cmdStr, shell=True, wait=True, ret_type=None)
+        exit(0)                                     # and exit this process
+
+
+def sanitizeLine(strIn):
+    """clear and replace some inappropriate chars from strIn."""
+    #
+    # use translate - more pythonic
+    #
+    chg__in = "(){} *.&"		# chg these
+    chg_out = "[][]__.+"		# to these
+    lose_em = " ',!;~"		# lose these
+    trans = str.maketrans(chg__in, chg_out, lose_em)
+
+    return (strIn.translate(trans))
+
+
+def validate_video(fileIn):
+    """check extent of fileIn against a known extents, good return(True)."""
+    valid_Extents = {
+        ".mp4": True, ".mkv": True, ".avi": True, ".ogg": True, ".m4v": True,
+        ".mov": True, ".flv": True, ".wmv": True, ".vob": True, ".ts": True,
+        ".mp4": True,
+    }
+    (fileIn_base, fileIn_ext) = os.path.splitext(fileIn)
+
+    return(valid_Extents.get(fileIn_ext, False))  # default=False, valid=True
+
+
+def calc_audio_size(audio_bitrate, time):
+    """input a-bitrate, time -> return (a_bitrate * 1000 / 8) * time."""
+    return ((audio_bitrate * 1000 / 8) * float(time))
+
+
+def calc_video_size(bitrate, ab, time):
+    """given bitrate, ab, time - calculate and return size of the video."""
+    global p
+    # bitrate = 315k
+    # ab = 64k
+    # time = duration in seconds from query
+
+    # time is in msec - divide by
+    # 1000 for proper calculation
+    time = int(time)/1000
+
+    video_size = float(bitrate) / 7.785 * float(time)
+    # video_size = float(bitrate) / 7.86 * float(time)
+    # video_size = bitrate / 8 * time
+    # logging.info('video-size='+phr(video_size))
+    audio_size = calc_audio_size(ab, time)
+    # logging.info('audio-size='+phr(audio_size))
+    total_size = int(video_size + audio_size)
+
+    return(total_size)
+
+
+#
+# def phr(size, precision)
+#
+# https://code.activestate.com/recipes/577081-humanized-representation-of-a-number-of-bytes/
+#
+def phr(size, precision=2):
+    """Return a human readable string string of any number of bytes."""
+    RADIX = 1000
+    # RADIX = 1024
+    suffixes = ['B', 'KB', 'MB', 'GB', 'TB']
+    # suffixes=['B', 'KiB', 'MiB', 'GiB', 'TiB']
+    suffixIndex = 0
+    while size > RADIX:
+        suffixIndex += 1			# increment the index of the suffix
+        size = size/RADIX			# apply the division
+    return("%.*f %s" % (precision, size, suffixes[suffixIndex]))
+
+
+def get_mediainfo(fileIn):
+    """open the file with mediainfo, return filesz, dur, w:h, frame_rate"""
+    global ff
+    global p
+
+    myQuery =\
+        "General;%FileSize%~%Duration/String3%~%Duration%\nVideo;"\
+        + "~%Width%:%Height%~%FrameRate%~%DURATION%"
+    # sysCmd = ('%s --Inform=\"%s\" \"%s\"') % (p.mediaInfo, myQuery, fileIn)
+    sysCmd = '{} --Inform=\"{}\" \"{}\"'.format(
+        p.mediaInfo,
+        myQuery,
+        fileIn
+    )
+    tmpOut = os_getstatusoutput(sysCmd, status=False).rstrip()
+
+    return(tmpOut)
+
+
+def sort_nicely(l):
+    """Sort the given list in the way that humans expect."""
+    convert = lambda text: int(text) if text.isdigit() else text
+    alphanum_key =\
+        lambda key: [convert(c) for c in re.split('([0-9]+)', key)]
+    l.sort(key=alphanum_key)
+
+
+if __name__ == "__main__":
+    main()
