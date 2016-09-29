@@ -1,0 +1,276 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+from sys import argv, exit
+import os.path
+import argparse
+from magoo.logtools import check_logging_args_argparse, logging
+# from magoo.proctools import os_notify
+from yad import YAD
+
+"""ff-dropper - onscreen yad-based drag n drop target for multiple cmds."""
+"""
+put a yad drag n drop window on the screen - items dropped are processed by
+the current -cmd=<string>.  Default is ff-rename.  others can be specified
+on the commandline.
+
+atom linter-flake8 add to Atom stuff:
+  http://www.marinamele.com/install-and-configure-atom-editor-for-python
+
+2016-01-09 - program linted by atom/flake8
+2016-02-08 - changed yad buttons to use ff-tail -n 50 -f (yad version)
+2016-03-01 - Changed ff-enc log button filename to remove '.sh' from name
+2016-03-01 - Added wget command to command table (download to ~/Desktop/wget)
+2016-04-08 - Added ff-fbrename to command table (filebot rename file)
+2016-04-21 - update code for magoo_tools
+"""
+
+
+class Program:
+    """this class holds common program values for this program."""
+
+    def __init__(self):
+        """Store important program info here."""
+        self.cmdName = os.path.basename(argv[0])  # save cmd name (no path)
+        self.logFile = '/tmp/'+self.cmdName+'.log'  # my logging filename
+        self.defLogLevel = 20				# default log level (INFO)
+        self.version = "v0.1.9"
+        self.lastEdit = "2016-03-01"
+        self.lintStatus = True
+        self.title = "ff-dropper"				# default title
+        self.icon = ""					# launcher icon
+        self.image = ""					# imager dropper window
+        self.text = ""					# tooltip text
+        self.button = "View-Log!cab_view!Tail-Log"		# my log view button
+        # set my path in env
+        self.PATH = "/home/magoo/.bin:"\
+            + "/home/magoo/.bin/ff:"\
+            + "/usr/local/bin:"\
+            + "/usr/local/bin:/usr/bin:/bin"
+        self.args = ""					# command args
+        self.largs = ""					# command args
+        self.cmnds = {
+            'ff-info': 'ff-info -of',			# detailed file info
+            'ff-size': 'ff-size -of',			# less detailed, all files in dir
+            'ff-title': 'ff-size -mt -of',		# show ff-size metadata all files
+            'ff-grok': 'ff-grok',				# show ff-enc space savings
+            'ff-enc': 'ff-drop-sh -D enc',		# transcode video files
+            'ff-cropsize': 'ff-cropsize',		# rsz, crop and perf->folder.jpg
+            'ff-rename': 'ff-rename -L 10 -F -s -e',  # rename the video file
+            'ff-copy2': 'ff-drop-sh',	        # modify video files
+            'ff-wget': 'wget -O /home/magoo/Desktop/wget/raw.jpg',	 # wget jpg
+            'ff-fbrename': 'ff-fbrename',       # filebot rename file
+            'ff-fetch-omdb': 'ff-fetch-omdb',   # fetch json data from omdbapi
+            'ff-stdout': 'yad --list --column=DND',	 # show args onscreen
+        }
+        '''these entries replaced by ff-copy2s gui picking function:
+            'ff-copy2as': 'ff-drop-sh copy2as',  # audio shrink
+            'ff-copy2vs': 'ff-drop-sh copy2vs',  # video shrink
+            'ff-copy2cc': 'ff-drop-sh copy2cc',  # change copy
+            'ff-copy2vo': 'ff-drop-sh copy2vo',		# change volume
+            'ff-copy2tc': 'ff-drop-sh copy2tc',		# title copy
+        '''
+        #
+        # we just need the icon name if icon.svg
+        # is located in /usr/share/icons/hicolor and
+        # gtk-update-icon-cache /usr/share/icons/hicolor
+        # is run to update the cache (full path works too)
+        #
+        self.images = {
+            'ff-enc': 'FFmpeg',
+            'ff-copy2': 'FFmpeg',
+            'ff-rename': 'pyrenamer',
+            'ff-fbrename': 'pyrenamer',
+            'ff-cropsize': 'gtk-zoom-fit',
+        }
+
+
+"""create program class."""
+p = Program()
+
+
+def main():
+    """Main Function - program entry point."""
+    global p
+
+    #
+    # set up my command line arguments
+    #
+    parser = argparse.ArgumentParser(prog=p.cmdName,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description='Drag n Drop window for various utilities',
+        epilog=p.cmdName + ' ' + p.version + ' ' + p.lastEdit)
+    parser.add_argument(
+        '--logging',
+        '-ll',
+        required=False,
+        type=str,
+        default='INFO',
+        help='-ll=DEBUG|INFO|WARNING|ERROR|CRITICAL', metavar=''
+    )
+    parser.add_argument(
+        '--logfile',
+        '-lf',
+        action='store_true',
+        required=False,
+        help='debug logging to ' + p.logFile + ' instead of the screen'
+    )
+    parser.add_argument(
+        '--command',
+        '-cmd',
+        required=False,
+        type=str,
+        default='ff-rename -L 10 -F -s -e',
+        help='command=<cmd> (ff-enc|ff-info|ff-size|ff-title|ff-cropsize|\
+        ff-rename|ff-grok)',
+        metavar=''
+    )
+    parser.add_argument(
+        '--string',
+        '-str',
+        required=False,
+        type=str,
+        default='',
+        help='your command string',
+        metavar=''
+    )
+    # default is no-buttons = True, setting it to False exposes
+    # the YAD tail button
+    parser.add_argument(
+        '--tailButton',
+        '-tb',
+        action='store_false',
+        required=False,
+        default=True,
+        help='add tailview button to dialog'
+    )
+
+    #
+    # split options and non options into args, largs
+    # args = parser.parse_args() just parses args - nonargs generate an error
+    #
+    p.args, p.largs = parser.parse_known_args()
+    # get loglevel and start logging
+    check_logging_args_argparse(p.args, p.logFile)
+
+    # establish my path
+    os.environ['PATH'] = p.PATH
+    # myPATH = os.environ['PATH']
+    # print(myPATH)
+
+    logging.debug('log level='+str(p.defLogLevel))
+    logging.debug('logfile='+('False', 'True')[p.args.logfile])
+    logging.debug('tailbutton='+('False', 'True')[p.args.tailButton])
+
+    # process command line args
+    logging.debug('arg='+str(p.args))
+
+    #
+    # if a custom command string on CLI
+    # then set command to that string
+    #
+    if p.args.string:
+        p.args.command = p.args.string
+        p.title = p.args.string.split(' ', 1)[0]		# word 1 from string
+        # p.title = p.args.string.partition(' ')[0]		# alternative method
+    elif 'ff-rename' not in p.args.command:		# not default -cmd=ff-something
+        p.title = p.args.command				# title is the ff-something
+        # lookup needs try/except to provide default
+        # get function has this built-in to it.
+        # p.args.command = p.cmnds[p.args.command]		# dict lookup
+        # dict get with failure default
+        p.args.command = p.cmnds.get(p.args.command, 'ff-rename -F -s -e')
+    else:
+        p.title = 'ff-rename'
+
+    # loop here until user closes program
+    while True:
+        #
+        # this is an interesting goodie - if I set command to something
+        # DND will execute it directly - no button push needed
+        # the URI header: 'file://' that is prepended to the name
+        #  needs to be stripped off the by the receiving application
+        #
+        # if the command isnt set then the app returns the URI string
+        # when the user pushes OKAY button then we can strip and call
+        # some commands ourselves (we dont display an OKAY button)
+        #
+        p.text = "Drag n Drop to "+p.title
+        # try:
+        #  p.image = p.icon = p.images[p.title]
+        # lookup icons/images for commands
+        # except:
+        #  p.image = p.icon = ""
+        if 'ff-copy2' in p.title:
+            p.image = p.icon = p.images.get('ff-copy2', "")	 # get FFmpeg icon
+        else:
+            p.image = p.icon = p.images.get(p.title, "")  # or lookup by title
+        logging.debug("icon=image"+str(p.icon))
+        # os_notify('image='+p.image)
+
+        #
+        # set the text,icon,tooltip,command and
+        #  logfile name for the tailview button
+        #
+        if p.title == 'ff-rename':
+            buttonArg = \
+                "View-Log!cabview!Tail-the-Log:ff-tail -n 50 -f /tmp/ff-rename.log"
+        elif p.title == 'ff-enc':
+            buttonArg = \
+                "View-Log!cabview!Tail-the-Log:ff-tail -n 50 -f /tmp/ff-enc-pass.log"
+        else:
+            buttonArg = \
+                "View-Log!cabview!Tail-the-Log:ff-tail -n 50 -f /tmp/ff-copy2.log"
+
+        #
+        # if tailButton (reverse logic)
+        # we display an image in the dialog
+        #
+        if p.args.tailButton:
+            x = YAD().DND(
+                title=p.title,              # dialog title
+                command=p.args.command,		# cmd to run on drag and drop
+                text=p.text,                # tooltip text
+                geometry="180x40-25+25",    # window geometry
+                image=p.image,				# window image-makes window bigger
+                window_icon=p.icon,			# launcher icon
+                tooltip=True,				# display tooltip on rollovers
+                undecorated=False,			# False - no titlebar or buttons
+                on_top=True,                # place window on top of others
+                no_buttons=p.args.tailButton,  # no dialog buttons
+                button=buttonArg,			# view log btn for each cmd
+                separator=' ',				# separator
+            )
+        #
+        # we drop the image and display
+        # the logview button (ff-tail)
+        #
+        else:
+            x = YAD().DND(
+                title=p.title,                 # dialog title
+                command=p.args.command,        # cmd to run on drag and drop
+                text=p.text,                   # tooltip text
+                geometry="180x40-25+25",	   # window geometry
+                window_icon=p.icon,            # launcher icon
+                tooltip=True,                  # display tooltip on rollovers
+                undecorated=False,             # False - no titlebar or buttons
+                on_top=True,                   # place window on top of others
+                no_buttons=p.args.tailButton,  # no dialog buttons
+                button=buttonArg,              # view log btn for each cmd
+                separator=' ',                 # separator
+            )
+
+        # button = "gtk-close:1",
+        # logging.info('Returned='+str(x))
+        if x is None:
+            exit(0)
+
+
+#
+# this causes program to execute
+# and exit cleanly on interrupt
+#
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        exit(1)
