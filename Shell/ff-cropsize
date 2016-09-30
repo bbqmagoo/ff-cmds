@@ -1,0 +1,495 @@
+#!/usr/bin/env bash
+# linted with atom/shellcheck 2016-01-08
+#
+# filters using imagemagick:
+#   http://www.fmwconcepts.com/imagemagick/
+# yad:
+#   http://sourceforge.net/p/yad-dialog/wiki/Examples/?page=0
+# Mario Valle Scripts:
+#   http://mariovalle.name/postprocessing/ImageTools.html
+# Resizing the image with padding using convert on ubuntu:
+#   https://stackoverflow.com/questions/29073639/resizing-the-image-with-padding-using-convert-on-ubuntu
+# Shell Scripting Part V: Functions in Bash:
+#   https://www.howtoforge.com/tutorial/linux-shell-scripting-lessons-5/
+# Chapter 19. Here Documents:
+#   http://www.tldp.org/LDP/abs/html/here-docs.html
+# file:// URI to regular filename in bash:
+#   https://www.linuxquestions.org/questions/linux-software-2/file-uri-to-regular-filename-in-bash-485227-print/
+# ImageMagick v6 Examples -- Resampling Filters:
+#   http://www.imagemagick.org/Usage/filter/
+# convert - convert an image or sequence of images (thumbnail)
+#   http://imagemagick.sourceforge.net/http/www/convert.html
+# use imagemagick to convert, crop, resize and display
+#
+# dependencies:
+# http://www.fmwconcepts.com/imagemagick/index.php
+# use fmwconcepts perforations for film look
+# use fmwconcepts sharp to sharpen image
+#
+# 2016-04-01 - added file validation for images - notify/exit if not valid
+# 2016-04-12 - added wget of http:// url if dragged onto ff-cropsize window
+# 2016-09-30 - added trap, cleaned up code, fixed a few bugs
+#
+# Last Edit: 2016-09-30 (magoo)
+# Version: = v0.1.3
+# lint Status: = True
+#
+FALSE=0
+TRUE=1
+_TOSCRN_=$FALSE
+_TOSCRN_=$TRUE
+_TOFILE_=$TRUE
+_TOFILE_=$FALSE
+_TOPOPUP_=$FALSE
+# logging output to screen and logfile
+# based on _TOSCRN_ and/or _TOFILE_
+# being TRUE or FALSE
+_STDERR_="/dev/fd/1"
+_STDOUT_="/dev/fd/2"
+_IFLAG_=$TRUE
+cmdName=$(basename "$0")
+# alternate in-shell
+cmdName="${0##*/}"
+logFile="/tmp/${cmdName}.log"
+img_out="folder.jpg"				# our output filename
+
+#
+# make sure imagemagick and fmwconcepts cmds
+# are found on the system
+#
+identify=$(which identify)
+display=$(which display)
+convert=$(which convert)
+sharp=$(which sharp)
+perf=$(which perforations)
+
+if [[ ! ${identify} ||
+      ! ${display} ||
+      ! ${convert} ]]; then
+  die 1 \
+    "imageMagick does not appear to be installed" \
+    "sudo apt-get install imagemagick" \
+    "will correct this problem"
+fi
+
+if [[ ! ${sharp} ||
+      ! ${perf} ]]; then
+  die 1 \
+    "sharp and perforations do not appear to be installed" \
+    "http://www.fmwconcepts.com/imagemagick/index.php" \
+    "downloading from above website will correct this problem"
+fi
+W=128						# final width and Height
+H=128
+W4=$((W*4))					# 4x bigger for resize
+H4=$((H*4))
+
+#
+# logging output to screen and logfile
+# based on _TOSCRN_ and/or _TOFILE_
+# being TRUE or FALSE
+#
+function logging()
+{
+  set +o errexit
+  ((_TOSCRN_)) || ((_TOFILE_)) && _DS_=$(date +"%H:%M:%S")
+  ((_TOSCRN_)) || ((_TOFILE_)) && _INFO_="FN=${FUNCNAME[1]},LN=${BASH_LINENO[0]}"
+  ((_TOSCRN_)) && echo -e "[${_DS_}]-${_INFO_}}-$*" > "${_STDOUT_}"
+  ((_TOFILE_)) && echo -e "[${_DS_}]-${_INFO_}}-$*" >> "${logFile}"
+  set -o errexit
+}
+
+#
+# display gui popup message on users screen
+# based on _TOPOPUP_ being TRUE to work
+#
+function notify()
+{
+  set +o errexit;
+  ((_TOPOPUP_)) && _DS_=$(date +"%H:%M:%S")
+  ((_TOPOPUP_)) && notify-send "[${_DS_}]-$*"
+  set -o errexit;
+}
+
+function Usage() {
+cat <<EOF
+
+  Convert input graphic to ${img_out} for TV-Show folders
+
+  Crop, Resize and Center an Image on a Gray Background.
+  Final size is ${W}x${H} with aspect ratio maintained.
+
+  Usage: ${cmdName} [flags] <downloaded-video-cover.{jpg,pnm,...}>
+  flags:
+    -h)elp (show help info)
+    -I)nteractive (ask for confirmation)
+    -N)on-interactive (don't ask)
+EOF
+  exit 1
+}
+
+#
+# findFP() - split path/filename.ext into logical parts
+# args:
+#   $1 = path/filename.ext
+#
+# set $fp to full filename string
+# Result: this command seperates them into logical parts
+#   $fn = filename
+#   $fnr = filename root
+#   $fnp = filename path
+#   $ext = filename ext (including .)
+#
+# http://www.thegeekstuff.com/2010/07/bash-string-manipulation/
+#   bash string functions information
+#
+function findFP()
+{
+  local spc=' '     # ' ' for match
+  local dsh='-'     # '-' single dash
+  local dot='.'     # '.' for match
+  local fp="$1"     # incoming fpath/fname.ext
+  local fnr         # fname-root (0)
+  local ext         # fname-ext (1)
+  local fnp         # fname-path (2)
+  local fn          # orig fname (3)
+  local dp          # BASH_REMATCH (4)
+
+  #
+  # if filename.ext includes spaces
+  # change ' ' to '-' and rename file
+  # so that everything won't blow-up
+  #
+  if [[ "${fp}" =~ ${spc} && "${fp}" =~ ${dot} ]]; then
+    if [[ -e "${fp}" ]]; then
+      new=${fp//spc/$dsh}                # change all ' ' to '-'
+      #new="$(echo "${fp}"|sed -e 's/ /-/g')"
+      /bin/mv "${fp}" "${new}"
+      logging "${fp} changed to ${new}"
+      fp="${new}"          # $fp is changed to new
+    fi
+  fi
+
+  #
+  # split path/filename.ext into its corresponding parts
+  #
+  [[ $fp =~ ^(.*/)?(.+)?$ ]] && { dp=${BASH_REMATCH[1]}; fn=${BASH_REMATCH[2]};
+  ext=$([[ $fn = *.* ]] && printf %s ".${fn##*.}" || printf '');
+  [[ $fn == "$ext" ]] && { fnr=$fn; ext=''; } || fnr=${fn:0:$((${#fn}-${#ext}))}; }
+  fnp=$(dirname "$fp"); dp=${dp}    # stop shellcheck from bitchin'
+
+  #       0      1      2     3
+  nP=( ${fnr} ${ext} ${fnp} ${fn} )       # dp is usually dir path
+  echo "${nP[@]}"                         # return parts values to caller
+  return
+}
+
+#
+# bash version of python/perl die()
+# Print an error message and exit with given status
+# call as: die status "message" ["message" ...]
+# https://www.dartmouth.edu/~rc/classes/ksh/print_pages.shtml
+# https://stackoverflow.com/questions/7868818/in-bash-is-there-an-equivalent-of-die-error-msg
+#
+function die()
+{
+  local exitStatus=${1}; shift
+  echo -e "${BASH_SOURCE[1]} Died at ${BASH_LINENO[0]} in ${FUNCNAME[1]}()" > \
+    ${_STDERR_}
+  for i in "$@";
+  do
+    echo -e "${i}" > ${_STDERR_}
+  done
+  exit "${exitStatus}"
+}
+
+#
+# remove tmp files and kill display window
+#
+function cleanUp()
+{
+  logging "trap -> cleanUp"
+  # collect pids for display processes
+  myPid=$(pgrep -a -f '[dD]isplay -title'|
+    awk '{print $1}'|
+    tr '\n' ' ')
+  logging "pid(s)=${myPid}"
+  # if pids found - kill each
+  if [[ ! -z "$myPid" ]]; then
+    for p in ${myPid[*]}
+    do
+      kill "${p}"
+    done
+  fi
+  # rm the tempfile directory
+  if [[ -d "$myTmp" ]]; then
+    rm -rf "$myTmp"
+  fi
+}
+
+#
+# display title and prompt and
+# get a Y/N response from the
+# user (observe interactive flag)
+# okay button returns 0 keep going
+# cancel button closes program and
+# EXIT calls trap -> cleanUp()
+#
+function okayYN()
+{
+  local file="$1"
+  local title="$2"
+  local msg="$3"
+  local button0="OKay!gtk-ok!OKay:0"
+  local button1="Cancel!gtk-cancel!Cancel:1"
+  #
+  # return if not interactive
+  #
+  if ((! _IFLAG_)); then
+    return
+  fi
+  #
+  # display image on-screen
+  #
+  ${display} -title "$title" -resize 256x256 "$file" &
+  #
+  # display yad window-icon
+  #
+  click=$(yad \
+    --title "Preview" \
+    --image=gtk-zoom-fit \
+    --window-icon=gtk-zoom-fit \
+    --on-top \
+    --geometry -50+50 \
+    --text-align='center' \
+    --tooltip \
+    --button="${button0}" \
+    --button="${button1}" \
+    --text "$msg")
+  #click=$?
+  logging "click=${click}"
+
+  # user clicked okay
+  # return and continue
+  # code processing
+  if [[ "${click}" -eq "0" ]]; then
+    return
+  fi
+}
+
+#
+# validate file is image data
+#
+function validateImage()
+{
+  local f="$1"
+
+  fType=$(file "$f"|tr ':' '~'|awk -F~ '{print $2}')
+
+  if [[ "$fType" =~ image ]]; then
+    echo $TRUE
+  else
+    echo $FALSE
+  fi
+}
+
+#
+# main()
+#
+set -o errexit                                          # exit on error
+set -o nounset                                          # no empty vars
+set -o pipefail                                         # fail pipe-errs
+#
+# logging "$# Args - $@"
+while getopts "hIN" opt
+do
+  case $opt in
+    I)
+      _IFLAG_=$TRUE
+    ;;
+    N)
+      _IFLAG_=$FALSE
+    ;;
+    \?|h)
+      Usage
+    ;;
+  esac
+done
+shift $((OPTIND - 1))
+
+# lookin for just 1 arg
+if [[ "$#" -eq "1" ]]; then
+  img_in="$1"					# filename to convert
+else
+  Usage
+fi
+
+logging ""
+logging "$img_in"
+
+#
+# get secure temp directory
+#
+myTmp=$(mktemp -dt "XXXXXXXXXX")        # temporary folder
+logging "TempDir=$myTmp"
+
+# setup a trap for
+# cleaning up after
+trap cleanUp  0 1
+
+#
+# strip http:// if passed a dnd URI
+# works - but need to get image to
+# the directory for the tv show name
+#
+if [[ "$img_in" =~ http:// ]]; then
+  # notify "$img_in"
+  wget -O "${myTmp}/raw.jpg" "${img_in}"       # fetch image
+  img_in="${myTmp}/raw.jpg"                    # img_in is it
+  # display "$img_in"
+  # notify "$img_in"
+  # exit 0
+fi
+# end NEW
+
+#
+# strip file:// if passed a dnd URI
+#
+if [[ "${img_in}" =~ file:// ]]; then
+  #img_in=$(echo ${img_in#file://})     # strip URI if found from arg[1]
+  img_in=${img_in#file://}              # strip URI if found from arg[1]
+  logging "$img_in"
+fi
+
+#findFP "$img_in"                       # split filename into parts
+read -r fnr ext fnp fn <<< "$(findFP "$img_in")"
+
+# if we are not already in the right dir - cd into it
+if [[ "${fnp}" != "." ]]; then
+  cd "${fnp}" || die 1 "Error: Could not cd into ${fnp}"
+fi
+
+img_in="${fn}"                         # img_in = our filename
+logging "file=${fnp}/${fn}"
+logging "dir=$(pwd)"
+
+#
+# if not an image
+# discard and notify user
+#
+if [[ $(validateImage "$img_in") -eq $FALSE ]]; then
+  notify-send "$img_in is not" "a graphic data image"
+  die 1 \
+    "" \
+    "$img_in is not" \
+    "a graphic data image" \
+    ""
+fi
+#
+# find current image width and height
+# figure out our resized image width and height
+#   (maybe just return orientation wide/tall)
+# ar_WH=($(${identify} "$img_in"|
+#  awk '{ print $3 }'|
+#  awk -Fx '{ print $1 " " $2 }'))
+# inW=${ar_WH[0]}
+# inH=${ar_WH[1]}
+#
+
+# if original image not jpeg - convert it and make it img_in
+if [[ ! ("$img_in" =~ .jpg) ]]; then
+  ${convert} "$img_in" "${myTmp}/converted.jpg"
+  img_in="${myTmp}/converted.jpg"
+fi
+
+#
+# convert -size 120x120 cockatoo.jpg -resize 120x120 +profile "*" thumbnail.jpg
+#
+# In this example, '-size 120x120' gives a hint to the JPEG decoder that the
+# image is going to be downscaled to 120x120, allowing it to run faster by
+# avoiding returning full-resolution images to ImageMagick for the subsequent
+# resizing operation. The '-resize 120x120' specifies the desired dimensions
+# of the output image. It will be scaled so its largest dimension is 120 pixels.
+# The '+profile "*"' removes any ICM, EXIF, IPTC, or other profiles that might
+# be present in the input and aren't needed in the thumbnail.
+#
+# intermediate step - write to tmp and display - step_1
+"${convert}" \
+  -size ${W4}x${H4} \
+  "${img_in}" \
+  -resize ${W4}x${H4} \
+  -background gray \
+  -gravity center \
+  -extent ${W4}x${H4} \
+  +profile "*" \
+  "${myTmp}/step_1.jpg"
+#
+# add perforations and display - step_2
+#
+"${perf}" \
+  -s 2 \
+  -n 24 \
+  -p LR \
+  -b black \
+  "${myTmp}/step_1.jpg" \
+  "${myTmp}/step_2.jpg"
+#
+# get confirmation or cancellation
+#
+okayYN \
+  "${myTmp}/step_2.jpg" \
+  "${W4}x${H4}-Resized" \
+  "Looks good ?\nClick [Cancel] or\n[OK] to Continue"
+
+#-|
+#    tee $myTmp/step_1.jpg |
+#      display -title "${W4}x${H4} Resized" -resize 265x256 jpg:- &
+# sharpening ?
+#  -unsharp 0x0.75+0.75+0.008 -|
+
+#
+# resize to 50% - 256x256
+#
+"${convert}" "${myTmp}/step_2.jpg" \
+  -resize 50% \
+  -despeckle \
+  -filter triangle \
+  "${myTmp}/step_3.jpg"
+  # sharpen with fmw sharp
+"${sharp}" \
+  -m 1 \
+  -f 2 \
+  "${myTmp}/step_3.jpg" \
+  "${myTmp}/step_4.jpg"
+#
+# get confirmation or cancellation
+#
+okayYN \
+  "${myTmp}/step_4.jpg" \
+  "256x256-Thumbnail" \
+  "Install this image\nas ${img_out} ?"
+
+#    tee $myTmp/step_3.jpg |
+#      display -title "128x128 Thumbnail" -resize 256x256 jpg:- & 			# step_3 1
+# sharp -m 1 -f 20 image_in image_out
+# okayYN "Install this image as $img_out ?"
+
+if [[ -e "folder.jpg" ]]; then
+  mv "folder.jpg" "orig-folder.jpg"				# if existing - save by rename
+fi
+
+if [[ ! -d ".images" ]]; then
+  mkdir ".images"						# if not exists - create
+fi
+
+#
+# save image as folder.jpg
+#
+cp "${myTmp}/step_3.jpg" "./.images/$img_out"       # save
+ln -s "./.images/${img_out}" "${img_out}"           # link
+
+#
+# remove temp files
+#
+cleanUp
+exit 0
