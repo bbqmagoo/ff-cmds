@@ -1,0 +1,172 @@
+#!/usr/bin/env bash
+# -*- mode: sh -*-
+# -*- coding: utf-8 -*-
+#
+# stop an errant ff-recode-sh launched from ff-analyze
+#
+# Version:  0.1.3
+# LastEdit: 2016-09-30 (nagoo)
+#
+FALSE=0
+TRUE=1
+DEMO=$FALSE
+_TOSCRN_=$FALSE
+_TOSCRN_=$TRUE
+_TOFILE_=$TRUE
+_TOFILE_=$FALSE
+#_TOPOPUP_=$FALSE
+# logging output to screen and logfile
+# based on _TOSCRN_ and/or _TOFILE_
+# being TRUE or FALSE
+#_STDERR_="/dev/fd/1"
+_STDOUT_="/dev/fd/2"
+#IFSDEF=$' \t\n'                 # for resetting IFS
+IFS=$' \t\n'                     # Default IFS=<space><newline><tab>
+cmdName=$(basename "$0")
+logFile="/tmp/${cmdName}.log"
+execFlag=$FALSE
+userName="${USER}"
+
+#
+# logging output to screen and logfile
+# based on _TOSCRN_ and/or _TOFILE_
+# being TRUE or FALSE
+#
+function logging()
+{
+  set +o errexit
+  ((_TOSCRN_)) || ((_TOFILE_)) && _DS_=$(date +"%H:%M:%S")
+  ((_TOSCRN_)) || ((_TOFILE_)) && _INFO_="FN=${FUNCNAME[1]},LN=${BASH_LINENO[0]}"
+  ((_TOSCRN_)) && echo -e "[${_DS_}]-${_INFO_}}-$*" > "${_STDOUT_}"
+  ((_TOFILE_)) && echo -e "[${_DS_}]-${_INFO_}}-$*" >> "${logFile}"
+  set -o errexit
+}
+
+#
+# show st> ${_STDOUT_}atus of a flag
+#
+function flagStatus()
+{
+  (($1)) && echo "TRUE" || echo "FALSE";
+}
+
+function Usage()
+{
+cat <<EOF_Usage
+
+    kill processes of an accidental | errant ff-recode-dir
+
+    Usage: ${cmdName} [-u)ser <username>] [-e)xecFlag]
+
+    Flags:
+        -u)ser <alternate username> (used by root)
+        -e)xecFlag (nothing done without -e, just echoed)
+
+    Process:
+        find errant process and echo to console,
+        kill if -e used
+
+EOF_Usage
+  exit 1
+}
+
+#
+# kill processes by name
+#
+function killByName()
+{
+  name="$1"
+
+  while [[ $TRUE ]]; do
+    # pid=$(ps -ax|grep $name|grep -v yad|awk '{print $1}')
+    pid=$(pgrep -a -f $name|
+      awk '{print $1}'|
+      tr '\n' ' ')
+    logging "pid=${pid}"
+
+    if [[ ! -z "${pid}" ]]; then
+      for p in ${pid[*]}; do
+        kill "${p}"
+        if ! ((DEMO)); then
+          echo "${name}: killing ${p}"
+        else
+          logging "${name}: killing ${p}"
+        fi
+      done
+    fi
+
+    # if no process ids returned - break/return
+    if [[ -z "${pid}" || "${DEMO}" ]]; then
+      #break
+      return
+    fi
+  done
+}
+
+#
+# main()
+#
+# Process CLI args
+#
+while getopts "eu:" opt; do
+  case "$opt" in
+    e)
+      execFlag=$TRUE        # actually doit
+      echo "execFlag: $(flagStatus ${execFlag})"
+      ;;
+    u)
+      userName="${OPTARG}"    # altername user (by root)
+      ;;
+    \?)
+      Usage
+      ;;
+  esac
+done
+shift $((OPTIND-1))
+
+#
+# Usage (no args expected)
+#
+if [[ "$#" -ne "0" ]]; then
+  Usage
+fi
+
+#
+# find process ids for these named processes
+#
+for p in "ff-drop-sh" "ff-recode-dir" "ffmpeg" "ff-enc-pass.sh"
+do
+  pid="$(pgrep -a -u "$userName" -f "$p"|
+    awk '!/yad/ {printf "%s ", $1}')"
+  if ! [[ -z "${pid}" ]]; then
+    if -z [[ "${pids}" ]]; then
+      pids="{pid}"
+    else
+      pids+=" {pid}"
+    fi
+  fi
+  if ((execFlag)); then
+    for i in ${pid[*]}; do
+      echo "Killing ${i}"
+      kill "${pid}"
+    done
+  else
+    # pid=$(echo "${pid}"|tr '\n' ' ')
+    echo "${p} found (${pid})"
+  fi
+done
+
+if ! [[ -z "${pids}" ]]; then
+  echo "Found processes(${pids})"
+else
+  echo "Found processes(${pids})"
+fi
+
+if ((! execFlag)); then
+  echo ""
+  echo "execFlag: $(flagStatus ${execFlag})"
+  echo "Use -e flag to actually kill these processes"
+  echo ""
+fi
+
+exit 0

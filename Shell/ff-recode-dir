@@ -1,0 +1,225 @@
+#!/usr/bin/env bash
+# -*- mode: sh -*-
+# -*- coding: utf-8 -*-
+#
+# Last Edit: 2016-09-30 (magoo)
+# Version: = v0.1.3
+# lint Status: = False
+#
+# called by button press from ff-analyze
+#
+FALSE=0
+TRUE=1
+_TOSCRN_=$FALSE
+_TOSCRN_=$TRUE
+_TOFILE_=$TRUE
+_TOFILE_=$FALSE
+_TOPOPUP_=$FALSE
+_TOPOPUP_=$TRUE
+# logging output to screen and logfile
+# based on _TOSCRN_ and/or _TOFILE_
+# being TRUE or FALSE
+#_STDERR_="/dev/fd/1"
+_STDOUT_="/dev/fd/2"
+#IFSDEF=$' \t\n'                 # for resetting IFS
+IFS=$' \t\n'                     # Default IFS=<space><newline><tab>
+cmdName=$(basename "$0")
+logFile="/tmp/${cmdName}.log"
+execFlag=$FALSE
+miCmd=$(which 'mediainfo')
+#
+# logging output to screen and logfile
+# based on _TOSCRN_ and/or _TOFILE_
+# being TRUE or FALSE
+#
+function logging()
+{
+  set +o errexit
+  ((_TOSCRN_)) || ((_TOFILE_)) && _DS_=$(date +"%H:%M:%S")
+  ((_TOSCRN_)) || ((_TOFILE_)) && _INFO_="FN=${FUNCNAME[1]},LN=${BASH_LINENO[0]}"
+  ((_TOSCRN_)) && echo -e "[${_DS_}]-${_INFO_}}-$*" > "${_STDOUT_}"
+  ((_TOFILE_)) && echo -e "[${_DS_}]-${_INFO_}}-$*" >> "${logFile}"
+  set -o errexit
+}
+
+#
+# display gui popup message on users screen
+# based on _TOPOPUP_ being TRUE to work
+#
+function notify()
+{
+  local ET=5000         # default expire time
+  if [[ $# -gt 1 ]]; then
+    ET=$1;
+    shift
+  fi
+  set +o errexit;
+  ((_TOPOPUP_)) && _DS_=$(date +"%H:%M:%S")
+  ((_TOPOPUP_)) && notify-send --expire-time=$ET "[${_DS_}]-$*"
+  set -o errexit;
+}
+
+#
+# explain and exit
+#
+function Usage {
+  cat <<EOF_Usage
+
+        $cmdName is usally initiated by ff-analyze Recode-Dir [BTN].
+        Cd into the ff-analyze directory and glob the video files.
+
+        For each file call ff-drop-sh to Recode the file with ffmpeg.
+        $cmdName usually not run directly by a user.
+
+        Usage: ${cmdName} [-h] [-e] < <tvshow directory> | <file(s)list> >
+
+        Flags:
+            -e)xec - actually do some work
+            -h)elp - tell about the program
+
+EOF_Usage
+}
+
+#
+# bash version of python/perl die()
+# Print an error message and exit with given status
+# call as: die status "message" ["message" ...]
+# https://www.dartmouth.edu/~rc/classes/ksh/print_pages.shtml
+# https://stackoverflow.com/questions/7868818/in-bash-is-there-an-equivalent-of-die-error-msg
+#
+function die()
+{
+  local exitStatus=${1}; shift
+  echo -e "${BASH_SOURCE[1]} Died at ${BASH_LINENO[0]} in ${FUNCNAME[1]}()" > \
+    ${_STDERR_}
+  for i in "$@";
+  do
+    echo -e "${i}" > ${_STDERR_}
+  done
+  exit "${exitStatus}"
+}
+
+#
+# query video files in the video directory
+# and figure out a default safety FrameRate
+#
+function getDefaultFR {
+  # echo $("${miCmd}" --Inform="Video;%FrameRate%\n" *.{mp4,mkv,avi}|
+  echo "$(${miCmd} --Inform="Video;%FrameRate%\n" *.{mp4,mkv,avi}|
+    uniq|
+    head -1|
+    tr -d '\n')"
+}
+
+#
+# test a video file for telltale 315k video BitRate
+# if 315k return False else Return True - recode it
+#
+function recodeViability {
+  file=$1
+
+  rVal=$($miCmd --Inform="Video;%BitRate%" "$file")	# get video-br
+  if [[ "$rVal" == "315000" ]]; then
+    echo "$FALSE"
+    return
+  else
+    echo "$TRUE"
+    return
+  fi
+}
+
+#
+# main()
+#
+# 2016-01-14 - (changed to getopts)
+# Process CLI args
+#
+while getopts "he" opt; do
+  case "$opt" in
+    e)
+      execFlag=$TRUE
+      ;;
+    \?|h)
+      Usage
+      exit 1
+      ;;
+  esac
+done
+shift $((OPTIND-1))
+#
+# no args - show Usage
+#
+if [[ "${#}" -eq "0" ]]; then
+  Usage
+  exit 1
+fi
+#
+# if given a directory - cd into it
+#
+if [[ "$#" -eq "1" && -d "$1" ]]; then
+  cd "$1" || die  1 "Error: Could not cd into $1"
+  shift
+fi
+
+#
+# find the video files
+#   http://wiki.bash-hackers.org/syntax/expansion/globs
+#
+# if files on cmdline -> we were called by ff-analyze
+#   with files selected and clicking [ff-recode select]
+#   button.
+#
+if [[ "$#" -gt "0" ]]; then
+  # files="${@}"                # assign incoming args to files
+  files="${*}"                  # assign incoming args to files
+  logging "files=${files}"
+else
+  # change - use globbing
+  # files=$(ls -1 *.[ma][kpv][iv4]|awk '{printf "%s\n", $1}')# also works
+  # files = video files globbed in that directory
+  #
+  files="$(echo *|tr ' ' '\n'|awk '/.avi|.mkv|.mp4/ {printf "%s\n", $1}')"
+  logging "globbing:\n$files"
+fi
+
+#
+# find out what the normal framerate is for all files that report it. we can
+# then substitute it into the equation for broken files that dont report it
+#
+defFr=$(getDefaultFR)
+logging "defFR=${defFr}"
+
+for f in $files;
+do
+  #
+  # find if file viable fo recode
+  #
+  recodeFlag=$(recodeViability "$f")
+  if [[ $recodeFlag == "$TRUE" ]]; then
+    #
+    # call ff-drop-sh with framerate for file
+    #
+    if [[ "$execFlag" == "$TRUE" ]]; then
+      notify \
+        1500 \
+        "ff-drop-sh -F ${defFr} enc ${f} Started"
+      logging "ff-drop-sh -F ${defFr} enc $f"
+      ff-drop-sh -F "${defFr}" enc "$f" > /dev/null 2>&1
+    else
+      notify \
+        1500 \
+        "ff-drop-sh -F ${defFr} enc ${f} Skipped"
+    fi
+  else
+    notify \
+      2000 \
+      "ff-drop-sh -F ${defFr} enc ${f} not Viable - Skipped"
+  fi
+done
+
+#
+# clean up after myself
+#
+if [[ -e "$logFile" ]]; then
+  rm -f "$logFile"
+fi
