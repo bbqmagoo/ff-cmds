@@ -1,0 +1,274 @@
+#!/usr/bin/env bash
+# -*- mode: sh -*-
+# -*- coding: utf-8 -*-
+#
+# launching gourmet with gui - selecting different database files
+#
+# --database-url <url-to-database>
+#   option which allows specifying an [SQLAlchemy-style database
+#   [URL](http://docs.sqlalchemy.org/en/rel_0_8/core/engines.html#database-urls)
+#   (which by default is something like:
+#     `sqlite:////home/magoo/.gourmet/recipes.db`
+#
+# --gourmet-directory <path-to-dir> default is:
+#   ~/.gourmet
+#
+# advanced bash shell programming (very good)
+#   https://www.dartmouth.edu/~rc/classes/ksh/print_pages.shtml
+#
+# safe globbing for filenames:
+# http://www.dwheeler.com/essays/filenames-in-shell.html
+# 2016-09-24 - modify code to pass shellcheck, use shell substr/repl
+#
+# last edit: 2016-09-24
+#
+FALSE=0
+TRUE=1
+_TOSCRN_=$FALSE
+_TOSCRN_=$TRUE
+_TOFILE_=$FALSE
+_TOFILE_=$TRUE
+_TOPOPUP_=$TRUE
+#_STDERR_=/dev/fd/1
+_STDOUT_=/dev/fd/2
+IFSDEF=$' \t\n'                 # Default IFS=<space><newline><tab>
+IFS=${IFSDEF}                   # set IFS=<space><newline><tab>
+cmdName=$(basename "$0")
+logFile="/tmp/${cmdName}.log"
+# for yad Form CB entry
+defDB="magoo"
+
+#
+# logging output to screen and logfile
+# based on _TOSCRN_ and/or _TOFILE_
+# being TRUE or FALSE
+#
+function logging()
+{
+  set +o errexit
+  ((_TOSCRN_)) || ((_TOFILE_)) && _DS_=$(date +"%H:%M:%S")
+  ((_TOSCRN_)) || ((_TOFILE_)) && _INFO_="FN=${FUNCNAME[1]},LN=${BASH_LINENO[0]}"
+  ((_TOSCRN_)) && echo -e "[${_DS_}]-${_INFO_}}-$*" > "${_STDOUT_}"
+  ((_TOSCRN_)) && echo -e "[${_DS_}]-${_INFO_}}-$*" >> "${logFile}"
+  set -o errexit
+}
+
+#
+# display gui popup message on users screen
+# based on _TOPOPUP_ being TRUE to work
+#
+function notify()
+{
+  set +o errexit;
+  ((_TOPOPUP_)) && _DS_=$(date +"%H:%M:%S")
+  ((_TOPOPUP_)) && notify-send "[${_DS_}]-$*"
+  set -o errexit;
+}
+
+#
+# bash version of python/perl die()
+# Print an error message and exit with given status
+# call as: die status "message" ["message" ...]
+# https://www.dartmouth.edu/~rc/classes/ksh/print_pages.shtml
+# https://stackoverflow.com/questions/7868818/in-bash-is-there-an-equivalent-of-die-error-msg
+#
+function die()
+{
+  local exitStatus=${1}; shift
+  echo -e "${BASH_SOURCE[1]} Died at ${BASH_LINENO[0]} in ${FUNCNAME[1]}()" > \
+    ${_STDERR_}
+  for i in "$@";
+  do
+    echo -e "${i}" > ${_STDERR_}
+  done
+  exit "${exitStatus}"
+}
+
+#
+# look at gourmet dir and figure
+# out names of valid databases
+# returns list of directories for
+# found database files (includes .)
+#
+function getDBNames()
+{
+  # databases=""
+  # get list of filenames in .gourmet (includes .)
+  # find . -name "$default" ??
+  # files=$(ls -a -1 ${default}|grep -v '\.\.'|tr '\n' ' ')
+  cd "${default}"             # goto gourmet directory
+  #files=$(echo . *)          # works
+  files=$(echo ./. ./*|sed -e 's,\.\/,,g')
+  logging "Poss dbfiles=${files}"
+  # for each name - see if there is a recipes.db
+  # for f in ${files[@]}; do
+  for f in ${files[*]}; do
+    if [[ -e "${default}/${f}/recipes.db" ]]; then
+      if [[ "${f}" == "." ]]; then
+        databases="default"
+      else
+        databases+=" ${f}"
+      fi
+    fi
+  done
+  logging "Found dbfiles=${databases}"
+  echo "${databases}"
+  return
+}
+
+#
+# if no arg given - put up yad form
+# user will pick the database name
+#
+function dbPick()
+{
+  local spc=' '
+  local exc='!'
+
+  # get dbnames from ~/.gourmet
+  databases=$(getDBNames)
+
+  # name requested on CLI
+  # validate or fail
+  if [[ $# -eq 1 ]]; then
+    for v in ${databases[*]}    # for each name i databases
+    do
+      if [[ $1 =~ $v ]]; then   # if matched
+        echo "${v}:0"           # validated reqname + return code
+        return                  # and return
+      fi
+    done
+    echo ":1"               # else blank name and fail code (cancel)
+    return                  # return unsatisfied
+  fi
+
+  #
+  # yad combo-box dialog options (no pre-pick)
+  #
+  # buttonCls="Close!gtk-close!Close-Window:1"
+  #
+  # create yad data for dialog pick
+  #
+  #yadData=$(echo ${databases[*]}|
+  #    sed -e "s/ /!/g" -e "s/${defDB}/^${defDB}/g")
+  # shell builtin ${string//substring/replacement}
+  yadData=${databases//$spc/$exc}   # ' ' -> '!' // is global
+  logging "yadData=$yadData"
+  yadData=${yadData/$defDB/^$defDB} # theDB -> ^theDB (for YAD)
+  logging "yadData=$yadData"
+  yad_opts=(
+    --form \
+    --title="Gourmet Databases" \
+    --text="pick a database" \
+    --image="gourmet" \
+    --window-icon="gourmet" \
+    --icon-theme="Mint-Y" \
+    --geometry=250x100-25+25 \
+    --on-top \
+    --tooltip \
+    --always-print-results \
+    --item-separator="!" \
+    --button="Okay!gtk-ok!Select-DB:0" \
+    --button="Cancel!gtk-close!Close-Window:1" \
+    --separator='' \
+    --field="dbs":CB \
+      ${yadData}
+  )
+
+  #
+  # user selected database name is returned
+  # to by yad to $ans by shell read command
+  # we also save the return code 0=good,1=bad
+  #
+  read -ra ans < <( yad "${yad_opts[@]}" )    # get users gui response
+  # return code for dialog
+  retCode=$?
+
+  #
+  # user cancel - make sure ans -s NULL
+  #
+  if [[ "${retCode}" -eq 1 ]]; then
+    ans=""
+  fi
+
+  dbName="${ans}"
+  echo "${dbName}:${retCode}"   # necessary as function return
+  return
+}
+
+#
+# cleanup function
+#
+function cleanUp()
+{
+  local tFiles
+
+  tFiles=$(echo /tmp/gourmet_tempfile_*.jpg)
+  # logging "tempfiles=$tFiles"
+  if ! [[ -z ${tFiles} ]]; then
+    for f in ${tFiles[*]}
+    do
+      # logging "rm -f ${f}"
+      /bin/rm -f "${f}"
+    done
+  fi
+}
+
+#
+# main()
+#
+home="/home/magoo"
+gourmet=".gourmet"
+default="${home}/${gourmet}"
+set -o errexit                                          # exit on error
+set -o nounset                                          # no empty vars
+set -o pipefail                                         # fail pipe-errs
+
+#
+# if done logging then
+# if logfile exists - rm
+#
+if ! ((_TOFILE_)); then
+  if [[ -e "${logFile}" ]]; then
+    /bin/rm -f "${logFile}"
+  fi
+fi
+
+#
+# user picks a database (retVal is dbname:yad-ret-code)
+#
+if [[ $# -eq 1 ]]; then
+  retVal="$(dbPick "$1")"
+else
+  retVal="$(dbPick)"
+fi
+
+#theDB=${retVal%:*}              # split out dbname
+#theDB=${retVal#*:}              # split out ret-code
+IFS=':'
+read -r theDB rCode <<< "${retVal}"
+IFS=${IFSDEF}
+logging "#${LINENO}-db=$theDB, rc=$rCode"
+#
+# user clicked cancel - exit
+#
+if [[ ${rCode} -eq 1 ]]; then   # odd code 1 = cancelled
+  die 1 \
+    "Error: $cmdName Cancelled or Database name not Found"
+fi
+
+#
+# else - default means normal
+# and some name means subdir under default
+# actual filename that gourmet opens is recipes.db
+#
+if [[ ${theDB} == "default" ]]; then
+  theDB="${default}"
+else
+  theDB="${default}/${theDB}"
+fi
+
+cleanUp                         # clear out gourmet /tmp/remnamts
+gourmet="$(which "gourmet")"    # path to script/executable
+# no double quotes here!
+exec ${gourmet} --gourmet-directory "${theDB}"
