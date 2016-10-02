@@ -1,0 +1,369 @@
+#!/usr/bin/env bash
+# vim:et:ft=sh:sts=2:sw=2:number=on
+#
+# Create a vbox vm config to test that a bootable thumbdrive boots
+#   remove the vm after it does its thing - must be done as root
+#
+# https://www.howtoforge.com/using-raw-devices-in-virtualbox-vms
+# http://www.perkin.org.uk/posts/create-virtualbox-vm-from-the-command-line.html
+# https://www.virtualbox.org/manual/ch08.html#vboxmanage-createvm
+# https://itsecworks.com/2012/04/24/virtualbox-the-tool-i-use-for-virtualization-of-course-with-cli/
+# https://superuser.com/questions/741734/virtualbox-how-can-i-add-mount-a-iso-image-file-from-command-line
+# http://forumubuntusoftware.info/viewtopic.php?t=9610 (diff thumbos vers)
+#
+# Last Edit: 2016-09-21 (magoo)
+# Version: = v0.1.2
+# lint Status: = False
+#
+FALSE=0
+TRUE=1
+_TOSCRN_=$FALSE
+_TOSCRN_=$TRUE
+_TOFILE_=$TRUE
+_TOFILE_=$FALSE
+#_TOPOPUP_=$FALSE
+# logging output to screen and logfile
+# based on _TOSCRN_ and/or _TOFILE_
+# being TRUE or FALSE
+_STDERR_=/dev/fd/1
+_STDOUT_=/dev/fd/2
+IFSDEF=$' \t\n'                 # for resetting IFS
+IFS=$' \t\n'                    # Default IFS=<space><newline><tab>
+
+# some constants
+CTLR='SATA'                                             # def ctlr type
+usbRaw='usb1.vmdk'                                      # raw disk name
+usbTest='USBTest'                                       # new vm config
+baseFld="/root/VirtualBox_VMs/${usbTest}"               # base config dir
+usbFile="/root/VirtualBox_VMs/${usbTest}/${usbRaw}"     # raw full path
+cmdName=$(basename "$0")                                # command name
+logFile="/tmp/${cmdName}.log"
+
+#
+# logging output to screen and logfile
+# based on _TOSCRN_ and/or _TOFILE_
+# being TRUE or FALSE
+#
+function logging()
+{
+  set +o errexit
+  ((_TOSCRN_)) || ((_TOFILE_)) && _DS_=$(date +"%H:%M:%S")
+  ((_TOSCRN_)) || ((_TOFILE_)) && _INFO_="FN=${FUNCNAME[1]},LN=${BASH_LINENO[0]}"
+  ((_TOSCRN_)) && echo -e "[${_DS_}]-${_INFO_}}-$*" > "${_STDOUT_}"
+  ((_TOSCRN_)) && echo -e "[${_DS_}]-${_INFO_}}-$*" >> "${logFile}"
+  set -o errexit
+}
+
+#
+# bash version of python/perl die()
+# Print an error message and exit with given status
+# call as: die status "message" ["message" ...]
+# https://www.dartmouth.edu/~rc/classes/ksh/print_pages.shtml
+# https://stackoverflow.com/questions/7868818/in-bash-is-there-an-equivalent-of-die-error-msg
+#
+function die()
+{
+  local exitStatus=${1}; shift
+  echo -e "${BASH_SOURCE[1]} Died at ${BASH_LINENO[0]} in ${FUNCNAME[1]}()" > \
+    ${_STDERR_}
+  for i in "$@";
+  do
+    echo -e "${i}" > ${_STDERR_}
+  done
+  exit "${exitStatus}"
+}
+
+#
+# return number of USB drives seen
+#
+function getNumberOfUSBs()
+{
+  # number of thumbdrives/USB currently plugged in
+  # could include large USB powered backup drives
+  NUM_USB=$(
+    (ls -l /dev/disk/by-id/*usb*|
+    sed 's/^.*\///g'|
+    sed 's/[0-9]*//g'|
+    uniq|
+    wc -l) 2>/dev/null)
+
+    # none - detected - error out
+    if [[ ${NUM_USB} -lt 1 ]]; then
+        die 1 "Error: no thumbdrives detected"
+        #echo "Error: no thumbdrives detected"
+        #exit 1
+    fi
+    echo "$NUM_USB"
+}
+
+#
+# return name of USB that
+# has a size < 100GigaBytes
+#
+function getNamesOfUSBs()
+{
+  declare -A USBNames=()
+
+  USBNames=$(
+    (ls -l /dev/disk/by-id/*usb*|
+    sed 's/^.*\///g'|
+    sed 's/[0-9]*//g'|
+    uniq) 2> /dev/null)
+
+  #
+  # loop over usb drives
+  # backup drives are over 100G (len of size >= 12)
+  # thumbdrives are < 12 - return the small one
+  #
+  #for dev in ${USBNames[@]}    # shellcheck complained about no quotes
+  for dev in ${USBNames}        # shellcheck OK - Works
+  do
+    logging "$dev"
+    # get name, sizeBytes, ... for each one
+    # lsblk
+    # -b = bytes
+    # -d = no dependents (just main device)
+    # -n = no headings
+    # -p = print full device paths
+    # -m = specify columns NAME,SIZE,OWNER,GROUP,MODE
+    #
+    thumbSize=$(lsblk -d -b -n -p -m /dev/"${dev}"|
+      tr -s " "|
+      cut -d" " -f2)
+    #
+    # -lt 12 length is -lt 100GB
+    #
+    if [[ ${#thumbSize} -lt 12 ]]; then
+        echo "/dev/${dev}"
+    fi
+  done
+}
+
+#
+# add a controller to the vm
+#
+function vboxAddController()
+{
+  # assign $1 to controller (def=SATA)
+  if ! [[ "$1" ]]; then
+    ctlr="${CTLR}"
+  else
+    ctlr="$1"
+    CTLR="$1"   # reset default controller
+  fi
+
+  # add a controller to vm
+  logging "adding $ctlr controller"
+  vboxmanage \
+    storagectl "${usbTest}" \
+    --name "${ctlr}" \
+    --add "${ctlr}" \
+    --bootable on
+}
+
+#
+# add storage to a controller (controller, type)
+#
+function vboxAddStorage()
+{
+  if [[ $# -ne 2 ]]; then
+    die 1 "Error: vboxAddStorage - needs 2 args"
+    #echo "Error: vboxAddStorage - needs 2 args"
+    #exit 1
+  fi
+  # assign $1 to controller (def=SATA)
+  if ! [[ "$1" ]]; then
+    ctlr="${CTLR}"
+  else
+    ctlr="$1"
+    CTLR="$1"   # reset default controller
+  fi
+  sType="$2"    # type = hdd, dvddrive ...
+
+  # attach new disk to vm controller
+  logging "attaching ${usbFile} to ${ctlr} as ${sType}"
+  vboxmanage \
+    storageattach "${usbTest}" \
+    --storagectl "${ctlr}" \
+    --port 0 \
+    --device 0 \
+    --type "${sType}" \
+    --medium "${usbFile}"
+}
+
+#
+# add a rawdisk device from USB device
+#
+function vboxCreateRawdisk()
+{
+  if [[ "$#" -eq "2" ]]; then
+    dName="$1"                # USB device name
+    fName="$2"                # name of rawdisk
+  else
+    die 1 "Error: vboxCreateRawdisk - needs 2 args"
+    #echo "Error: vboxCreateRawdisk - needs 2 args"
+    #exit 1
+  fi
+
+  logging "device = ${dName}"
+  logging "rawdisk = ${fName}"
+  logging "creating ${fName} from ${dName}"
+  VBoxManage \
+    internalcommands \
+    createrawvmdk \
+    -filename "${fName}" \
+    -rawdisk "${dName}"
+}
+
+#
+# detach/unmount and remove the disk (controller)
+#
+function vboxDetachStorage()
+{
+  ctlr="$1"
+
+# detach & unmount the disk
+logging "detach storage from ${ctlr}"
+vboxmanage storageattach "${usbTest}" \
+  --storagectl "${ctlr}" \
+  --port 0 \
+  --device 0 \
+  --type hdd \
+  --medium none \
+  --forceunmount
+}
+
+#
+# Rollback what we created
+# we need a blank slate each
+# time this program is run
+#
+function vboxRollback()
+{
+  logging "shutting down and rolling back"
+  set +o errexit             # dont errexit during this function
+  trap - INT TERM EXIT       # reset trap
+
+  # normal = sleep during rollback
+  # user can see vm before its gone
+  # else get it done and exit
+  if [[ "$1" == "normal" ]]; then
+    sleep="sleep"
+  else
+    sleep="false"
+  fi
+
+  # pause/resume/reset/poweroff
+  logging "sleep = ${sleep}"
+  ${sleep} 10
+  logging "vboxmanage controlvm ${usbTest} pause"
+  vboxmanage controlvm "${usbTest}" pause
+
+  ${sleep} 5
+  logging "  vboxmanage controlvm ${usbTest} poweroff"
+  vboxmanage controlvm "${usbTest}" poweroff
+
+  # detach & unmount the disk
+  logging "vboxDetachStorage ${CTLR}"
+  vboxDetachStorage "${CTLR}"
+
+  # delete it physically
+  logging "rm -f ${baseFld}/${usbFile}"
+  rm -f ${baseFld}/${usbFile}
+
+  ${sleep} 3
+  # delete vm from virtualbox
+  logging "vboxmanage unregistervm ${usbTest} --delete"
+  vboxmanage unregistervm "${usbTest}" --delete
+  logging "rm -rf ${baseFld}"
+  rm -rf "${baseFld}"
+
+  exit
+}
+
+#
+# main()
+#
+set -o errexit                                          # exit on error
+set -o nounset                                          # no empty vars
+set -o pipefail                                         # fail pipe-errs
+
+# if not root - print message
+if [[ $USER != 'root' ]]; then
+  die 1 "Usage: sudo ${cmdName} [/dev/some-device || some-bootable.iso]"
+  #echo "Usage: sudo ${cmdName} [/dev/some-device || some-bootable.iso]"
+  #exit 1
+fi
+
+#
+# if vm basefolder exists - remove it
+#
+if [[ -d "${baseFld}" ]]; then
+  rm -rf ${baseFld}
+fi
+
+# set trap for cleaning up
+trap "vboxRollback 'now'; exit" INT TERM EXIT
+#
+# if 1 arg on cli
+#
+if [[ $# -eq 1 ]]; then
+  # if /dev/sd? or .iso then probably okay
+  if [[ "$1" =~ /dev/sd || "$1" =~ .iso ]]; then
+	logging "cli arg = $1"
+    device="$1"
+  fi
+else
+  numFound=$(getNumberOfUSBs)
+  echo "${numFound} USB Drives Found"
+  device=$(getNamesOfUSBs)
+  echo "Thumbdrive is ${device}"
+fi
+
+# vm create boiler-plate
+# create test vm config
+vboxmanage \
+  createvm \
+  --name ${usbTest} \
+  --ostype 'Ubuntu_64' \
+  --register
+
+# modify it
+vboxmanage \
+  modifyvm "${usbTest}" \
+  --memory 256 \
+  --vram 32 \
+  --acpi on \
+  --ioapic on \
+  --cpus 1 \
+  --chipset piix3 \
+  --firmware bios \
+  --boot1 disk \
+  --boot2 dvd \
+  --boot3 none \
+  --boot4 none
+
+# create a new thumbdrive/raw vmdk
+if ! [[ $device ]]; then
+    die 1 "Error: no thumbdrive or iso found, exiting"
+	#echo "Error: no thumbdrive or iso found, exiting"
+	#exit 1
+fi
+
+# older machines use /dev/hd (ide)
+if [[ "$device" =~ /dev/sd ]]; then
+  vboxCreateRawdisk "${device}" "${usbFile}"
+  vboxAddController 'SATA'
+  vboxAddStorage 'SATA' 'hdd'
+else
+  usbFile="${device}"           # mount iso (not rawdisk USB)
+  logging "${usbFile}"
+  vboxAddController 'IDE'
+  vboxAddStorage 'IDE' 'dvddrive'
+fi
+
+# start up the vm
+VBoxManage startvm "${usbTest}"
+# rollback and make pristine
+vboxRollback 'normal'
+

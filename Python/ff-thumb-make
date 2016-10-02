@@ -1,0 +1,124 @@
+#!/usr/bin/env python3
+#
+# http://os-builder.com/Apps/Apps/all/binary-amd64/
+# ultimate-thumbos* (latest v1.14
+#
+import os
+from sys import argv, exit
+from magoo.proctools import os_whereis, os_pipe, os_call
+
+
+#
+# list usb disk devices in the system
+# thumbdrive for iso
+#
+def chooseThumbDrive():
+    # lsblk
+    # -b = bytes
+    # -d = no dependents (just main device)
+    # -n = no headings
+    # -p = print full device paths
+    # -o = specify which columns to print
+    #   NAME,SIZE,TYPE,TRAN,HOTPLUG,VENDOR
+    #
+    out = os_pipe(
+        'lsblk -d -b -n -p --output NAME,SIZE,TYPE,TRAN,HOTPLUG,VENDOR',
+        'egrep "usb"',      # return usb types
+        'tr -s " "',        # squish spaces to 1 space
+        'cut -d" " -f1,2'   # return name,size
+    )
+    out = out.split('\n')               # create lines from output list
+    print(str(len(out))+' USB devices found')
+    for l in out:                       # for each line
+        device, size = l.split(' ')     # split fields
+        # if less than 99.99G this must be a thumbdrive
+        if len(size) < 12:              # len < 12 digits = 99.99G
+            return(device)                # return
+
+
+#
+# looking for hybrid iso partition table (which looks like)
+# Device               Boot Start End     Sectors Size
+# rescatux-0.40b6.iso1 *    64    1234943 1234880 603M
+# hybrid images can be dd'd directly to the /dev/sdx device
+# convert iso to hybrid if not done already
+# conversion happens in place - fairly quickly
+#
+def isIsoImageHybrid(imageName):
+    try:
+        print('checking that iso is hybrid')
+        os_pipe(
+            '{} -l {}'.format(os_whereis('fdisk'), imageName),
+            '{} \"^Device\"'.format(os_whereis('egrep'))
+        )
+    except:
+        # convert iso to hybrid
+        # if the conversion succeeds - print it out
+        try:
+            print('iso is not hybrid')
+            print('converting to hybrid\n')
+            os_call('{} {}'.format(os_whereis('isohybrid'), imageName))
+        except:
+            print('conversion failed\n')
+        finally:
+            print('conversion succeeded\n')
+    finally:
+        return(imageName)
+
+
+#
+# copy iso image to thumbdrive
+#
+def copyIso2Thumb(iso, thumbDev):
+    #
+    # if thumbdrive is mounted
+    # unmount it
+    #
+    # print('thumb='+thumbDev)
+    try:
+        devIsMounted = os_pipe(
+            '{}'.format('mount'),                           # list mounts
+            '{} {}'.format(os_whereis('egrep'), thumbDev),  # look for thumb
+            '{} -d\" \" -f1'.format(os_whereis('cut'))      # device = f1
+        )
+    except:
+        devIsMounted = ""
+    finally:
+        if devIsMounted:
+            print('{} {}'.format(os_whereis('umount'), devIsMounted))
+            os_call('{} {}'.format(os_whereis('umount'), devIsMounted))
+    #
+    # from thumbos command
+    # Use dcfldd - forensic based version of dd aka "Disk Destroyer"
+    # dcfldd sizeprobe=if statusinterval=10 bs=4M if=image of=/dev/device
+    #
+    myCmd = '{} sizeprobe=if statusinterval=10 bs=4M if={} of={}'.format(
+        os_whereis('dcfldd'),
+        iso,
+        thumbDev)
+    # print(myCmd)
+    os_call(myCmd)
+    os_call('{}'.format(os_whereis('sync')))        # sync buffers
+    os_call('{}'.format(os_whereis('sync')))        # sync buffers
+
+
+def main():
+    if len(argv) != 2 or os.environ['USER'] != 'root':
+        exit('Usage: sudo {} <path-to-iso>'.format(os.path.basename(argv[0])))
+
+    if not os.path.exists(argv[1]):
+        exit('ERROR: ISO file {} was not found!'.format(argv[1]))
+
+    thumb = chooseThumbDrive()
+    if thumb is None:
+        exit('ERROR: no thumbdrive was found!')
+    else:
+        print('thumbdrive = '+thumb)
+
+    iso = isIsoImageHybrid(argv[1])
+
+    copyIso2Thumb(iso, thumb)
+
+
+if __name__ == "__main__":
+    main()
