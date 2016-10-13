@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=conky
+Comment=Root window based system monitor.
+Type=Application
+Exec=conky
+Terminal=false
+Icon=conky
+NoDisplay=false
+Categories=Utility;
+#OnlyShowIn=MATE;
+Hidden=false
+Keywords=system;monitor;root window;conky;

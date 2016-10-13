@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=ffcrop-dropper
+Comment=Provides Drag&Drop image crop target for folder.jpg image files
+Icon=folder-drag-accept
+Exec=ff-dropper -cmd=ff-cropsize
+Terminal=false
+MimeType=image/bmp;image/jpeg;image/gif;image/png;image/tiff;image/x-bmp;image/x-ico;image/x-png;image/x-pcx;image/x-tga;image/xpm;image/svg+xml;
+Categories=AudioVideo;AudioVideoEditing;
+#OnlyShowIn=MATE;
+Hidden=false
+Keywords=ffcrop-dropper;jpeg;folder.jpg;thumbnail;conversion;

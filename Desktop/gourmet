@@ -1,0 +1,14 @@
+[Desktop Entry]
+Name=ff-gourmet
+GenericName=Recipe Manager
+Name=Gourmet Recipe Manager
+Comment=Organize recipes, create shopping lists, calculate nutritional  information, and more.
+Icon=gourmet
+#Exec=gourmet
+Exec=ff-gourmet
+Terminal=false
+Type=Application
+Categories=GTK;Utility;
+StartupNotify=true
+#OnlyShowIn=MATE;
+Keywords=recipes;cooking;nutrition;nutritional information;shopping lists;
