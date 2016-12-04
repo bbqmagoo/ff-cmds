@@ -1,0 +1,464 @@
+#!/usr/bin/env bash
+#
+# called from ff-enc as:
+#   ff-enc-pass.sh [-dD]ebug <filename> and <calced size>
+# first it monitors pass 1 with pulsate.
+# when filename shows up - it monitors pass 2
+# for calced percent completion - then exits.
+# externals:    calls yad for gui progress
+#
+# IDEA: 2015-10-15
+#   make this run differently if called by different names
+#   xxxPass1, xxxPass2, xxxPass=Both like originally done
+#
+# Done: 2015-10-21
+#   removed zenity and replaced with yad which supports
+#   geometry function, wmctrl not needed any more.
+#
+# Done: 2015-10-21
+#   Added elapsed time logging for pass1, pass2, total
+#
+FALSE=0
+TRUE=1
+_TOSCRN_=$FALSE
+_TOSCRN_=$TRUE
+_TOFILE_=$TRUE
+_TOFILE_=$FALSE
+#_TOPOPUP_=$FALSE
+# logging output to screen and logfile
+# based on _TOSCRN_ and/or _TOFILE_
+# being TRUE or FALSE
+_STDERR_="/dev/fd/1"
+_STDOUT_="/dev/fd/2"
+_XTAIL_=$FALSE
+cmdName="$(basename "$0")"
+logFile="/tmp/${cmdName}.log"
+ICONPATH="/usr/share/icons"
+ICON="${ICONPATH}/FFmpeg_32x32.png"
+VERSION='v0.2.5'
+EDITED='2016-11-06'
+# lint Status: = TRUE
+#
+# logging output to screen and logfile
+# based on _TOSCRN_ and/or _TOFILE_
+# being TRUE or FALSE
+#
+function logging()
+{
+  set +o errexit
+  ((_TOSCRN_)) || ((_TOFILE_)) && _DS_=$(date +"%H:%M:%S")
+  ((_TOSCRN_)) || ((_TOFILE_)) && _INFO_="FN=${FUNCNAME[1]},LN=${BASH_LINENO[0]}"
+  ((_TOSCRN_)) && echo -e "[${_DS_}]-${_INFO_}}-$*" > "${_STDOUT_}"
+  ((_TOFILE_)) && echo -e "[${_DS_}]-${_INFO_}}-$*" >> "${logFile}"
+  set -o errexit
+}
+
+#
+# bash version of python/perl die()
+# Print an error message and exit with given status
+# call as: die status "message" ["message" ...]
+# https://www.dartmouth.edu/~rc/classes/ksh/print_pages.shtml
+# https://stackoverflow.com/questions/7868818/\
+#   in-bash-is-there-an-equivalent-of-die-error-msg
+#
+function die()
+{
+  local exitStatus=${1}; shift
+  echo -e "${BASH_SOURCE[1]} Died at ${BASH_LINENO[0]} in ${FUNCNAME[1]}()" > \
+    "${_STDERR_}"
+  for i in "$@";
+  do
+    echo -e "${i}" > "${_STDERR_}"
+  done
+  exit "${exitStatus}"
+}
+
+function Usage()
+{
+cat <<EOF_Usage
+
+  $cmdName [-d|-D|-h] <file to watch> <expected filesize>"
+  flags:
+    -d)ebug (set _TOSCRN_ to TRUE)
+    -D)ebug (also set _TOFILE_ & _XTAIL_ to TRUE)
+    -T)est (exec ${cmdName} in self-test mode)
+    -h)elp (show help info)
+
+  $cmdName is not usually user executable.
+  It is usually called by the ff-enc ffmpeg transcoder
+  to display gui onscreen progress of its actions
+
+  Version: $VERSION   Last Edited: $EDITED
+
+EOF_Usage
+  exit 1
+}
+
+#####################################################################
+# If called with no arguments a new timer is returned.
+#   Number of seconds since unix time began.
+# If called with arguments the first is used as a timer
+# value and the elapsed time is returned in the form HH:MM:SS.
+#
+# http://www.linuxjournal.com/content/use-date-command-measure-elapsed-time
+#
+function timer()
+{
+  if [[ $# -eq 0 ]]; then
+    date '+%s'
+  else
+    local  stime="$1"
+    etime=$(date '+%s')
+
+    if [[ -z "$stime" ]]; then stime="$etime"; fi
+
+    dt=$((etime - stime))       # difference
+    ds=$((dt % 60))             # seconds
+    dm=$(((dt / 60) % 60))      # minutes
+    dh=$((dt / 3600))           # hours
+    # return xx:xx:xx to be logged
+    printf '%d:%02d:%02d' $dh $dm $ds
+  fi
+}
+
+#
+# move zenity window where I want it (lower left)
+# not used now, but kept here for future reference in other code
+#
+function mvWindow()
+{
+  sleep .75
+  wmctrl -r "$file2Watch" -e 0,"$zX","$zY",-1,-1  # mv 2 Lwr Left corner
+  sleep 1.25
+  wmctrl -r "$file2Watch" -e 0,"$zX","$zY",-1,-1  # for our insurance
+}
+
+#
+# main()
+#
+set -o errexit                                          # exit on error
+set -o nounset                                          # no empty vars
+set -o pipefail                                         # fail pipe-errs
+
+while getopts "dDTh" opt; do
+  case "$opt" in
+    d)
+      _TOSCRN_=$TRUE
+      logging "logging to screen set to TRUE on CLI"
+      logging "$@"        # log the command line
+      ;;
+    D)
+      _TOSCRN_=$TRUE
+      _TOFILE_=$TRUE
+      logging "logging to $logFile set to TRUE on CLI"
+      logging "$@"        # log the command line
+      _XTAIL_=$TRUE
+      logging "_XTAIL_ flag set to TRUE on CLI"
+      ;;
+    T)
+      testFlag="${TRUE}";
+      logging "execing ${cmdName} in self-test mode"
+      exec ff-enc-pass-test
+      ;;
+    \?|h)
+      Usage
+      ;;
+  esac
+done
+shift $((OPTIND-1))
+
+logging "logging is on"
+if ((_XTAIL_)); then
+  tailTitle="Xterm-Tail_${logFile}"                     # title of window
+  tailLog="/usr/bin/tail --lines=25 -f ${logFile}"      # actual tail cmd
+  tailGeom="60x8-25+75"                                 # window geometry
+  # build the exec string variables
+  # Mtail
+  # CHANGE THIS
+  MTERM="/usr/bin/mate-terminal"
+  printf -v MtailCmd "%s --title \"%s\" --geometry %s -x %s" \
+    "${MTERM}" "${tailTitle}" "${tailGeom}" "${tailLog}"
+  # Xtail
+  xterm="/usr/bin/xterm"
+  printf -v XtailCmd "%s -title \"%s\" -geometry %s -sb -e %s" \
+    "XTERM" "${tailTitle}" "${tailGeom}" "${tailLog}"
+  # ff-tail
+  printf -v fftailCmd "%s %s" "ff-tail" "${logFile}"
+  fftailKill="[fF]f-tail ${logFile}"                # way to grep for pid
+  logging "logFile=${logFile}"
+  logging "tailLog=${tailLog}"
+  logging "XtailCmd=${XtailCmd}"
+  logging "MtailCmd=${MtailCmd}"
+  logging "fftailCmd=${fftailCmd}"
+  logging "fftailKill=${fftailKill}"
+  logging "xterm=${xterm}"
+  #
+  # run the command
+  #
+  #${tailCmd} >> "${logFile}" 2>&1 &  # useful to log [XM]tailCmd failures
+  #${XtailCmd} &
+  ${fftailCmd} &
+  #${MtailCmd} >> ${logFile} 2>&1 &    # useful to log tailCmd failures
+  thisPid=$$                # process id is this script
+  logging "thisPid=${thisPid}"
+  sleep 1
+  # from ff-drop-sh
+  # tailKill="[mM]ate-terminal.*${logFile}"        # way to grep for pid
+  # tailPid=$(pgrep -a -f "${tailKill}"|awk '!/yad/ {print $1}')
+  fftailPid=$(pgrep -a -f "${fftailKill}"|awk '!/yad/ {print $1}')
+  #fftailPid=$(ps -ef|grep "${fftailKill}"|grep -v grep|awk '{print $2}')
+  logging "fftailPid=${fftailPid}"
+fi
+#
+# if not 2 args
+# warn, inform, exit
+#
+if [[ $# -ne "2" ]]; then
+  Usage
+fi
+
+file2Watch=$1
+fileSize=$2
+#
+# variable zenity window width
+# based on 300 +
+# length of filename * 3
+#
+zW="$(echo "${#file2Watch} * 3 + 300"|bc)"
+zH='75'
+
+#
+# get Width and Height of screen
+# because zenity has no geometry (used for zenity wmctrl - keep for reference)
+# just width and height
+#
+scrXY=$(xdpyinfo|awk '/dimensions/ {print $2}') # my screen resolution 1280x800
+scrW=${scrXY%x*}; scrH=${scrXY#*x}              # get Width and Height
+
+#
+# lower left-hand screen corner
+#
+zX='25'                             # final yad X posn
+zY='25'                             # final yad Y posn
+#zY=$(echo "$scrH - 125"|bc)        # final Y posn if zenity
+
+logging "file2Watch=${file2Watch}"
+logging "Transcoded Size=${fileSize}"
+logging "scrW=${scrW}, scrH=${scrH}"
+logging "yadX=${zX}, yadY=${zY}"
+logging "yadWidth=${zW}, yadHeight=${zH}"
+logging "Gauges provided by yad"
+startT=$(timer)                            # save our start time
+#logging "Start time=${startT}"
+#
+# PASS 1
+#
+# pass 1 loop (in subshell [BG])
+#
+(
+#
+# pass 1 - while no file found we are still
+# in pass 1 - yad pulsate to show activity
+#
+logging "PASS 1 [BG] loop"
+logging "  -Pulsating for PASS 1"
+minCnt=0
+pass1T="$(timer)"                   # save start time
+sleep 1
+elapsedT="$(timer startT)"
+#echo "#Pass 1: min ${minCnt}"      # poke some text at yad - starts pulsate
+echo "#Pass 1: ${elapsedT}"         # poke some text at yad - starts pulsate
+#logging "Pass1 Start time=${pass1T}"
+((minCnt=minCnt+=1))                # increment if used
+while [[ ! -e "${file2Watch}" ]]; do
+  elapsedT="$(timer startT)"
+  tCnt="$(date +'%M%S')"            # 100 = 1m, 200 = 2m ...
+  sleep .5
+  mCnt="$(echo "${tCnt} % 200"|bc)" # 200, 400, 600 = 0 return
+  #
+  # if 2 min - update logging
+  if [[ "${mCnt}" -le "1" ]]; then
+    #logging "Pass 1: min ${minCnt}"
+    logging "Pass 1: ${elapsedT}"   # add to the log
+    sleep 1
+  fi
+  #
+  # if minute = 00 - Update yad
+  #
+  echo "#Pass 1: ${elapsedT}"       # update the dialog
+  if [[ "$(date +'%S')" == "00" ]]; then    # every minute
+    #echo "#Pass 1: min ${minCnt}"
+    #echo "#Pass 1: ${elapsedT}"    # update the dialog
+    ((minCnt=minCnt+=1))            # increment minute counter
+    sleep .5
+  fi
+  #
+  # if the file shows up - pass 1 done
+  # break out of while loop, pass 2 next
+  #
+  if [[ -e "${file2Watch}" ]]; then
+    logging "PASS 1 [BG] loop"
+    logging "  -PASS 1 finished"
+    # is $ even needed or "$"
+    # show pass 1 elapsed time
+    logging "  -PASS 1 Elapsed time=$(timer "${pass1T}")"
+    break
+  fi
+done
+) | yad \
+    --progress \
+    --pulsate \
+    --title="$file2Watch" \
+    --geometry="${zW}x${zH}+${zX}-${zY}" \
+    --text="Pass 1:" \
+    --image=$ICON \
+    --window-icon=$ICON \
+    --no-cancel \
+    --auto-close \
+    --no-buttons &
+
+#
+# PASS 2 [FG] loop-1
+#
+# spin here waiting for pass 1 [BG] to finish and Pass 2 to start
+# (the file $file2Watch gets created by ffmpeg pass 2)
+#
+logging "PASS 2 [FG] loop-1"
+logging "  -Concurrent with Pass 1 [BG]"
+logging "  -Waiting for PASS 1 to finish"
+while true; do
+  if [[ -e ${file2Watch} ]]; then
+    break
+  else
+    sleep .25
+  fi
+done
+
+(
+#
+# Pass 2 in subshell - monitor output file writing
+#
+# factor filesize by 1000/1024
+#
+minCnt=0
+fileSzk="$(echo "${fileSize} * 1000 / 1024"|bc)"
+logging "fileSzk=${fileSzk}"
+logging "Pass 2 [BG] loop-2"
+logging "% Complete Loop - Started"
+pass2T=$(timer)                        # save start time
+#logging "Pass2 Start time=$pass2T"
+#
+# create and echo percentage info to yad progress window
+#
+while true; do
+  elapsedT="$(timer startT)"
+  #currSize=$(ls -s "${file2Watch}"|awk '{print $1}')
+  currSize=$(du -s "${file2Watch}"|awk '{print $1}')
+  percDone=$(echo "${currSize} * 101 / ${fileSzk}"|bc)
+  #
+  # actively update the percent bar
+  #
+  #echo "#Pass 2: $percDone% $currSize of $fileSzk KB, min $minCnt"
+  # update the dialog
+  echo "#Pass 2: ${percDone}% ${currSize} of ${fileSzk} KB, ${elapsedT}"
+  sleep .5
+  #echo "#Pass 2: $percDone% $currSize of $fileSize KB"; sleep .5
+  echo "${percDone}";               # update the bar - increments the bar
+  sleep .5
+  tCnt=$(date +'%M%S')              # 100 = 1m, 200 = 2m ...
+  sleep .5
+  mCnt=$(echo "${tCnt} % 200"|bc)   # 200, 400, 600 = 0 return
+  #
+  # if 2 min - update logging
+  #
+  if [[ "$mCnt" -le "1" ]]; then
+    ((minCnt=minCnt+=2))            # increment minute counte
+    #logging "Pass 2: ${percDone}% min $minCnt"
+    logging "Pass 2: ${percDone}%: ${elapsedT}"
+    sleep 1
+  fi
+  #
+  # log percentage on the minute
+  #
+  #if [[ "$(date +'%S')" == "00" ]]; then
+  #  ((minCnt=minCnt+=1))            # increment minute counter
+  #  logging "Pass 2: ${percDone}% min $minCnt"
+  #fi
+  #
+  #  if percDone >= 99% break/exit subshell
+  #
+  if [[ "${percDone}" -ge "99" ]]; then
+    logging "100 Percent Done"
+    logging "Pass 2 [BG] loop-2 - finished"
+    # is $ even needed or "$"
+    logging "Pass 2 Elapsed time=$(timer "${pass2T}")"    # show pass 2 elapsed
+    echo "100"                        # double insurance
+    break                        # 100 percent exits
+  fi
+done
+) | yad \
+    --progress \
+    --percentage=1 \
+    --title="${file2Watch}" \
+    --geometry="${zW}x${zH}+${zX}-${zY}" \
+    --text="Pass 2:" \
+    --image=${ICON} \
+    --window-icon=${ICON} \
+    --no-cancel \
+    --auto-close \
+    --no-buttons &
+
+#
+# subshell is running in background so ...
+# spin here waiting for pass 2 to finish
+# when file2Watch is gone, break/continue
+#
+logging "PASS 2 [FG] - loop-3"
+logging "  -wait for ${file2Watch}"
+logging "  -to complete"
+while true; do
+  if [[ ! -e ${file2Watch} ]]; then
+    logging "Pass 2 [BG] loop - finished"
+    break
+  else
+    sleep .25
+  fi
+done
+
+logging "PASS 2 [FG] loop-3"
+logging "  -${file2Watch}"
+logging "  -Completed"
+# is $ even needed or "$"
+logging "Total Elapsed time=$(timer "${startT}")"    # show full elapsed time
+#
+# if logging - remove the log
+# log can be watched with tail -[fF]
+#
+if [[ -e "${logFile}" ]]; then
+  logging "found logFile=${logFile}"
+  if ((_XTAIL_)); then
+    # find our logwindow pid
+    xtermPid="$(pgrep -a -f '[Xx]term-Tail'|awk '{print $1}')"
+    #xtermPid="$(ps -ef|grep '[Xx]term-Tail'|awk '{print $2}')"
+    #logging "xtermpid=$xtermPid"
+    # from ff-drop-sh
+    # tailKill="[mM]ate-terminal.*${logFile}"      # way to grep for pid
+    # tailPid=$(pgrep -a -f "${tailKill}"|awk '!/yad/ {print $1}')
+    fftailPid2="$(pgrep -a -f "${fftailKill}"|awk '!/yad/ {print $1}')"
+    #fftailPid2="$(ps -ef|grep "$fftailKill"|grep -v grep|awk '{print $2}')"
+    logging "fftailPid2=${fftailPid2}"
+    sleep .5
+    #if [[ "${xtermPid}" != "" ]]; then
+    if ! [[ -z "${xtermPid}" ]]; then
+      logging "Killing xterm-tail=${xtermPid}"
+      kill -15 "${xtermPid}"          # terminate the xtail window
+    fi
+    #if [[ "${fftailPid}" != "" ]]; then
+    if ! [[ -z "${fftailPid}" ]]; then
+      logging "Killing ff-tail=${fftailPid}"
+      kill -15 "${fftailPid}"         # terminate the ff-tail window
+    fi
+  fi
+  logging "Removing ${logFile}"
+  /bin/rm -f "${logFile}"             # remove the logfile
+fi

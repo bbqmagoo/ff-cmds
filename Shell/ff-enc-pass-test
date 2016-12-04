@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# -*- mode: shell -*-
+# -*- coding: utf-8 -*-
+tf="/tmp/testfile.mp4"
+frag="/tmp/fragment"
+#
+# script to feed input into ff-enc-pass for testing purposes
+#
+# cleanup
+/bin/rm -f "${tf}" "${frag}"
+
+# create test file chunks
+dd if=/dev/zero of="${frag}" bs=50000 count=1 > /dev/null 2>&1 # copy fragment
+szIn=$(echo "26214400/1000"|bc)
+
+# start ff-enc-pass monitor
+# ff-enc-pass <filename> <filesize>
+ff-enc-pass "${tf}" "${szIn}" &
+
+# feeds into ff-enc-pass-test
+i=0
+while [[ $i -lt 600 ]];
+do
+  sleep .1              # we loop here for about 60 secs
+  #echo -en '.'
+  ((i += 1))            # for the pulsate mode of ff-enc-pass
+done
+
+cp "${frag}" "${tf}"     # when this appears we start progress mode
+while (true);
+do
+szOut="$(du --block-size=1000 "${tf}"|cut -f 1)"
+if [[ $szOut -ge $szIn ]]; then     # if equal - break loop
+  break
+fi
+cat "${frag}" >> "${tf}"           # add chunk to grow testfile
+sleep .1
+#echo -en .
+done
+
+# cleanup
+/bin/rm -f "${tf}" "${frag}"
