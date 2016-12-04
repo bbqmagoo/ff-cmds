@@ -1,0 +1,142 @@
+#!/usr/bin/env bash
+# -*- coding: utf-8 -*-
+# -*- mode: sh -*-
+#
+# using yad --text-info dialog and unix tail -[fF]
+# to make lightweight windowed logfile tailer.
+#
+# http://sourceforge.net/p/yad-dialog/tickets/220/
+#
+# Last Edit: 2016-10-25 (magoo)
+# Version: = v0.1.2
+# lint Status: = True
+#
+FALSE=0
+TRUE=1
+_TOSCRN_=$TRUE
+_TOSCRN_=$FALSE
+_TOFILE_=$TRUE
+_TOFILE_=$FALSE
+#_TOPOPUP_=$FALSE
+# logging output to screen and logfile
+# based on _TOSCRN_ and/or _TOFILE_
+# being TRUE or FALSE
+#_STDERR_="/dev/fd/1"
+_STDOUT_="/dev/fd/2"
+cmdName="$(basename "$0")"
+logFile="/tmp/${cmdName}.log"
+iPath="/usr/share/icons"
+pigtail32="${iPath}/Pigtails/Pigtail_32x32.png"
+tailCmd="$(which 'tail')"
+tailFlags=""
+Follow=""
+Lines="-n 10"
+
+#
+# logging output to screen and logfile
+# based on _TOSCRN_ and/or _TOFILE_
+# being TRUE or FALSE
+#
+function logging()
+{
+  set +o errexit
+  ((_TOSCRN_)) || ((_TOFILE_)) && _DS_=$(date +"%H:%M:%S")
+  ((_TOSCRN_)) || ((_TOFILE_)) && _INFO_="FN=${FUNCNAME[1]},LN=${BASH_LINENO[0]}"
+  ((_TOSCRN_)) && echo -e "[${_DS_}]-${_INFO_}}-$*" > "${_STDOUT_}"
+  ((_TOFILE_)) && echo -e "[${_DS_}]-${_INFO_}}-$*" >> "${logFile}"
+  set -o errexit
+}
+
+function Usage()
+{
+cat <<EOF
+
+  $cmdName file to yad dialog window
+
+  Usage: ${cmdName} [flags] <file>
+  flags:
+    -h)elp (show help info)
+    -f)ollow file
+    -F)ollow file --retry
+    -n)umber <num> output last n lines
+
+EOF
+  exit 1
+}
+
+#
+# main()
+#
+set -o errexit                                          # exit on error
+set -o nounset                                          # no empty vars
+set -o pipefail                                         # fail pipe-errs
+
+while getopts "fFn:" opt
+do
+  case $opt in
+    F|f)
+      Follow="-${opt}";
+    ;;
+    n)
+      Lines="--lines=${OPTARG}";
+    ;;
+    \?|h)
+      Usage;
+    ;;
+  esac
+done
+shift $((OPTIND - 1))
+
+
+if [[ "$#" -eq "0" ]]; then
+  Usage
+fi
+
+file="${1}"
+
+trap "rm -f /tmp/fifo" 0
+trap "rm -f /tmp/fifo; exit 1" 1 2 3 15
+trap "rm -f /tmp/fifo; exit 1" ERR
+
+mkfifo /tmp/fifo                # create fifo (pipe)
+exec 3<> /tmp/fifo              # assign it filehandle 3
+
+# [BG] waiting on fifo-pipe
+yad \
+  --text-info \
+  --title="$cmdName $file" \
+  --geometry=400x350-50+50 \
+  --text="$cmdName $file" \
+  --image="$pigtail32" \
+  --image-on-top \
+  --window-icon="$pigtail32" \
+  --no-focus \
+  --no-markup \
+  --on-top \
+  --button="gtk-close:0" \
+  --tail \
+  <&3 &
+
+YP=$!                           # Save the pid of that process
+sleep 1                         # race conditions ??
+
+if [[ ! -z "${Follow}" ]]; then
+  Pid="--pid=${YP}"
+  tailFlags="--pid=${YP} ${Follow}"
+fi
+
+if [[ ! -z "${Lines}" ]]; then
+  tailFlags="${Lines} ${tailFlags}"
+fi
+
+# No tailFlags - just execute tail
+if [[ -z ${tailFlags} ]]; then
+  ${tailCmd} >&3
+else
+  # tail with individual flags
+  # tail [FG] to previously created pipe
+  logging "Lines=${Lines}, Pid=${Pid}, Follow=${Follow}, File=${file}"
+  # send output of tail to fifo being monitored by yad dialog
+  ${tailCmd} "${Lines}" "${Pid}" "${Follow}" "${file}" >&3
+fi
+rm -f /tmp/fifo
