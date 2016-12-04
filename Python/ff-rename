@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
+"""ff-rename file renamer with many options."""
+# -*- mode: python -*-
 # -*- coding: utf-8 -*-
 # still have many lines > 85 width (needs fixing)
-"""ff-rename file renamer with many options."""
 from __future__ import print_function       # for python 2
 import os
 from sys import argv, exit, stderr
@@ -9,7 +10,8 @@ from optparse import OptionParser
 import os.path
 from magoo.logtools import check_logging_args_optparse
 from magoo.logtools import logging, remove_logfile
-from magoo.proctools import os_which, os_popen  # , os_killpid
+from optparse_mooi import CompactHelpFormatter  # , CompactColorHelpFormatter
+from magoo.proctools import os_which, os_popen, os_call  # , os_killpid
 # from re import search
 # python2 uses deprecated replace, import replace for python3 compatability
 # already imported print_function from __future__
@@ -28,25 +30,31 @@ Changes: Magoo
 Date:   03/04/07
 
 Renames files based on the input args.
-04/10/15 - Updated for Python 3, added --exec flag
-04/11/15 - Added chrCleanFilename() for media files
-04/12/15 - Added strCleanFilename() for video media files
-04/19/15 - Added videoNameFixer() for video media files
-04/20/15 - Added logging stuff
-04/21/15 - Added filename class
-04/22/15 - Added strFixAcronyms
-04/26/15 - Recode videoNameFixer
-04/28/15 - Added re.search to find season/episode#
-04/07/15 - Added append/prepend features
-05/09/15 - Added Program class
-05/30/15 - Added insert flag & code
-07/28/15 - Added rename directory code
-10/25/15 - Added xterm tail logging
-12/25/15 - Added code to remove [[ec]ttv] from names
+2015-04-10 - Updated for Python 3, added --exec flag
+2015-04-11 - Added chrCleanFilename() for media files
+2015-04-12 - Added strCleanFilename() for video media files
+2015-04-19 - Added videoNameFixer() for video media files
+2015-04-20 - Added logging stuff
+2015-04-21 - Added filename class
+2015-04-22 - Added strFixAcronyms
+2015-04-26 - Recode videoNameFixer
+2015-04-28 - Added re.search to find season-episode#
+2015-05-07 - Added append-prepend features
+2015-05-09 - Added Program class
+2015-05-30 - Added insert flag & code
+2015-07-28 - Added rename directory code
+2015-10-25 - Added xterm tail logging
+2015-12-25 - Added code to remove [[ec]ttv] from names
 2016-02-08 - changed ff-tail to yad shell version
 2016-04-20 - changed loggit & proccit to magoo_tools
 2016-04-20 - modified code to use new features of proccit
-linted with atom/flake8 2016-01-09
+2016-01-09 - linted with atom/flake8/pep8
+2016-10-16 - changed logging.debug commands to use ''.format()
+2016-10-22 - added fileWasDropped field and notify-send of Errors
+2016-10-23 - changed mediaStringClean to do [' ', '.'] = '_'
+2016-10-27 - made XTail a class function of Program class
+2016-10-31 - modified videoNameFixer to use retA array and '_'.join()
+2016-10-31 - added optparse-pretty help formatter for optparse
 '''
 
 
@@ -56,37 +64,95 @@ class Program:
     def __init__(self):
         """Store important program info here."""
         self.cmdName = os.path.basename(argv[0])  # my cmdname (no path)
-        self.logFile = '/tmp/' + self.cmdName + '.log'  # my log filename
+        self.logFile = '/tmp/{}.log'.format(self.cmdName)  # logging fname
         self.xTailGeom = "60x6-50+50"		# taillog xterm geometry
         self.fftailCmd = ""					# path to our ff-tail cmd
+        self.tailCmd = "ff-tail"            # xterm, mate-terminal, ff-tail
         self.xTailPid = 0					# store debug window pid
         self.defLogLevel = 20				# default log level (INFO)
-        self.version = "v0.2.0"				#
-        self.lastEdit = "2016-01-23"        #
+        self.version = "v0.2.3"				#
+        self.lastEdit = "2016-10-31"        #
         self.lintStatus = True              #
         self.args = ""					    # command args
         self.largs = ""					    # command args
-        self.titleFlag = False              # __future__ must go at front file ??
-        self.tailCmd = "ff-tail"            # xterm, mate-terminal, ff-tail
+        self.fileWasDropped = False         # dropped file ?
+        self.titleFlag = False        # __future__ must go at front file ??
+
+    def xTail(self):
+        """Open a ff-tail window and tail the logfile - for debugging."""
+        # create the file if it doesnt exist
+        # truncate the file if it does exist
+        open(self.logFile, 'wb').close()
+
+        if not self.fftailCmd:
+            self.ffTailCmd = os_which(self.tailCmd)
+
+            # format command to create logtail window
+            tailCmd = \
+                "{} -n 50 -f {} &".format(self.ffTailCmd, self.logFile)
+            # create the window and get/save its process id
+            self.xTailPid = \
+                os_popen(tailCmd, shell=False, wait=False, ret_type='pid')
+            sleep(.5)
+            logging.debug('tailLogPid={}'.format(str(self.xTailPid)))
+        return
+        '''
+        # alternate displays, mate-terminal, xterm
+        # mate-terminal
+        mtermCmd = '{}'.format(
+            os_which('mate-terminal'),
+            '-title \"{}_{}\"'.format('mterm-Tail', self.logFile),
+            '-geometry {}'.format(self.xTailGeom),
+            '-x \"tail -n 25 -f {}\"'.format(self.logFile)
+        )
+        # build xterm command string for tail
+        xtermCmd = '{} {} {} {} &'.format(
+            os_which('xterm'),
+            '-title \"{} : logtail : {}\"'.format(self.cmdName, self.logFile),
+            '-geometry {} -sb +hold'.format(self.xTailGeom),
+            '-e \"tail -n 100 -f {}\"'.format(self.logFile)
+        )
+        self.xTailPid = \
+            os_popen(xtermCmd, shell=True, wait=False, ret_type='pid')
+        sleep(.5)
+        logging.info('xterm={}'.format(xtermCmd))
+        return
+        '''
+
+    def XTailKill(self):
+        pass
+        return
+        # os_killpid(self.xTailPid, signal=15)
+        '''
+        # killCmd = '/bin/kill {}'.format(self.xTailPid)
+        # from subprocess import call
+        # os_call(killCmd, shell=True, executable='/bin/bash')
+        # os.popen("/bin/kill -9 "+p.xTailPid)
+        # remove_logfile(p.logFile)
+        '''
 
 
+# this is presently not integrated into this code
 class Filename:
     """this class holds filename info for current file."""
 
     def __init__(self, filename):
         """Store important program info here."""
         self.filename = filename.lower()		# lower case it
-        split = self.filename.rsplit('.', 1)		# reverse split extent
-        self.name = split[0]				# name = 1st half
-        self.ext = split[1] if len(split) == 2 else ''  # .ext = back half (if both chunks)
-        self.S__E__ = ""				# get this by using re.search
-        self.showname = ""				# whatever is in front of S__E__
-        self.x = []					# above split into words
-        self.epiname = ""				# after S__E__ before .ext
-        self.y = []					# above split into words
+        split = self.filename.rsplit('.', 1)    # reverse split extent
+        self.name = split[0]				    # name = 1st half
+        # .ext = back half (if both chunks)
+        self.ext = split[1] if len(split) == 2 else ''
+        self.S__E__ = ""                # get this by using re.search
+        self.showname = ""              # whatever is in front of S__E__
+        self.x = []                     # above split into words
+        self.epiname = ""               # after S__E__ before .ext
+        self.y = []                     # above split into words
         # self.let = self.name.translate(ALL, NUM)
         # self.num = self.name.translate(ALL, LET)
 
+    # https://stackoverflow.com/questions/390250/\
+    #   elegant-ways-to-support-equivalence-equality-in-python-classes
     def __eq__(self, other):
         """Boolean compare for 2 left=right Filenames."""
         return bool(self.num) and other == int(self.num)
@@ -97,164 +163,186 @@ p = Program()
 
 
 def main():
-    """Our program starts executing here."""
+    """Our program begins executing here."""
     global p
     #
     # basic optparse skeleton documentation
     # web=https://code.google.com/p/optparse/
-    #
-    # create the options we want to parse
-    #
+    # https://media.readthedocs.org/pdf/optparse-pretty/\
+    #   latest/optparse-pretty.pdf
     usage = "usage: %prog [args] <file(s)>"
-    optParser = OptionParser(usage=usage)
-    optParser.add_option(
-        "-v",
-        "--verbose",
-        action="store_true",
-        dest="verbose",
-        default=False,
-        help="Use verbose output"
+    optParser = OptionParser(
+        usage=usage,
+        formatter=CompactHelpFormatter(),
+        description='{} {}\n\n  {}'.format(
+            'Rename & Clean video buzz-words',
+            'from TV-Show torrent downloads.',
+            'Example: {} -v -e -s <file(s)>'.format(p.cmdName)),
+        epilog='\n{} {} {}'.format(
+            p.cmdName,
+            p.version,
+            p.lastEdit)
     )
     optParser.add_option(
-        "-l",
-        "--lowercase",
-        action="store_true",
-        dest="lowercase",
-        default=False,
-        help="Convert the filename to lowercase"
-    )
-    optParser.add_option(
-        "-f",
-        "--trim-front",
-        type="int",
-        dest="trimfront",
-        metavar="NUM",
-        help="Trims NUM of characters from the front of the filename"
-    )
-    optParser.add_option(
-        "-p",
-        "--prepend",
-        action="store",
-        type="string",
-        dest="prepend",
-        metavar="STR",
-        help="Prepend STR to the front of the filename",
+        '-a',
+        '--append',
+        action='store',
+        type='string',
+        dest='append',
         nargs=1,
-        default=""
+        default='',
+        metavar='STR',
+        help='Append STR to the rear of the filename'
     )
     optParser.add_option(
-        "-b",
-        "--trim-back",
-        type="int",
-        dest="trimback",
-        metavar="NUM",
-        help="Trims NUM of characters from the back of the filename"
+        '-b',
+        '--trim-back',
+        type='int',
+        dest='trimback',
+        metavar='NUM',
+        help='Trims NUM of characters from the back of the filename'
     )
     optParser.add_option(
-        "-a",
-        "--append",
-        action="store",
-        type="string",
-        dest="append",
-        metavar="STR",
-        help="Append STR to the rear of the filename",
-        nargs=1,
-        default=""
+        '-e',
+        '--exec',
+        action='store_true',
+        dest='execFlag',
+        default=False,
+        help='Actually do the file renames'
     )
     optParser.add_option(
-        "-i",
-        "--insert",
-        action="store",
-        type="string",
-        dest="insert",
-        metavar="STR POSN",
-        help="Insert STR at POSN in filename",
+        '-f',
+        '--trim-front',
+        type='int',
+        dest='trimfront',
+        metavar='NUM',
+        help='Trims NUM of characters from the front of the filename'
+    )
+    optParser.add_option(
+        '-i',
+        '--insert',
+        action='store',
+        type='string',
+        dest='insert',
         nargs=2,
-        default=""
+        default='',
+        metavar='STR POSN',
+        help='Insert STR at POSN in filename'
     )
     optParser.add_option(
-        "-r",
-        "--replace",
-        action="append",
-        type="string",
-        nargs=2,
-        dest="replace",
-        help="Replaces OLDVAL with NEWVAL in the filename",
-        metavar="OLDVAL NEWVAL"
-    )
-    optParser.add_option(
-        "-m",
-        "--mediaclean",
-        action="store_true",
-        dest="mediaclean",
+        '-l',
+        '--lowercase',
+        action='store_true',
+        dest='lowercase',
         default=False,
-        help="Remove and Replace chars unsuitable for media files"
+        help='Convert the filename to lowercase'
     )
     optParser.add_option(
-        "-s",
-        "--mediastring",
-        action="store_true",
-        dest="mediastring",
+        '-m',
+        '--mediaclean',
+        action='store_true',
+        dest='mediaclean',
         default=False,
-        help="Remove strings unsuitable for media files"
+        help='Remove and Replace chars unsuitable for media files'
     )
     optParser.add_option(
-        "-e",
-        "--exec",
-        action="store_true",
-        dest="execFlag",
-        default=False,
-        help="Actually do the file renames"
-    )
-    optParser.add_option(
-        "-L",
-        "--logging",
-        action="store",
-        type="string",
+        '-p',
+        '--prepend',
+        action='store',
+        type='string',
+        dest='prepend',
         nargs=1,
-        dest="logging",
-        help="loglevel=DEBUG|INFO|WARNING|ERROR|CRITICAL",
-        metavar="loglevel",
-        default='20'
+        default='',
+        metavar='STR',
+        help='Prepend STR to the front of the filename'
     )
     optParser.add_option(
-        "-F",
-        "--logfile",
-        action="store_true",
-        dest="logfile",
-        default=False,
-        help="log to "+p.logFile+" instead of the screen"
+        '-r',
+        '--replace',
+        action='append',
+        type='string',
+        nargs=2,
+        dest='replace',
+        metavar='OLDVAL NEWVAL',
+        help='Replaces OLDVAL with NEWVAL in the filename',
     )
     optParser.add_option(
-        "-T",
-        "--taillog",
-        action="store_true",
-        dest="taillog",
+        '-s',
+        '--mediastring',
+        action='store_true',
+        dest='mediastring',
         default=False,
-        help="Tail the log file to a window"
+        help='Remove strings unsuitable for media files'
     )
-    #
+    optParser.add_option(
+        '-u',
+        '--uppercase',
+        action='store_true',
+        dest='uppercase',
+        default=False,
+        help='Convert the filename to uppercase'
+    )
+    optParser.add_option(
+        '-v',
+        '--verbose',
+        action='store_true',
+        dest='verbose',
+        default=False,
+        help='Use verbose output'
+    )
+    # http://www.saltycrane.com/blog/2009/09/python-optparse-example/
+    optParser.add_option(
+        '-L',
+        '--logging',
+        action='store',
+        nargs=1,
+        dest='logging',
+        metavar='loglevel',
+        default='20',
+        type='choice',
+        choices=[
+            '10', '20', '30', '40', '50',
+            'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL',
+            'debug', 'info', 'warning', 'error', 'critical'
+        ],
+        help='loglevel = DEBUG | INFO | WARNING | ERROR | CRITICAL'
+    )
+    optParser.add_option(
+        '-F',
+        '--logfile',
+        action='store_true',
+        dest='logfile',
+        default=False,
+        help='log to {} instead of the screen'.format(p.logFile)
+    )
+    optParser.add_option(
+        '-T',
+        '--taillog',
+        action='store_true',
+        dest='taillog',
+        default=False,
+        help='Tail the log file to a window'
+    )
     # split options and non options into args, largs
     # args = optParser.parse_args() just parses args
     # non-args generate an error
-    #
     (p.args, p.largs) = optParser.parse_args()
 
-    remove_logfile(p.logFile)		# From loggit - remove previous log
+    remove_logfile(p.logFile)           # From loggit - remove prev log
 
     if p.args.taillog:
-        p.args.logfile = True			# set logfile true if tailing log
-        p.args.logging = '10'			# debug logging
+        p.args.logfile = True           # set logfile true if tailing log
+        p.args.logging = '10'           # debug logging
         # magoo/logtools
         check_logging_args_optparse(p.args, p.logFile, p.args.logfile)
-        xTail()					        # create xtail window
+        p.xTail()                         # create xtail window
     else:
         check_logging_args_optparse(p.args, p.logFile, p.args.logfile)
 
-    logging.debug('log level=' + str(p.args.logging))
-    logging.debug('logfile=' + ('False', 'True')[p.args.logfile])
-    logging.debug('taillog=' + ('False', 'True')[p.args.taillog])
-    logging.debug('execFlag=' + ('False', 'True')[p.args.execFlag])
+    logging.debug('log level={}'.format(str(p.args.logging)))
+    logging.debug('logfile={}'.format(('False', 'True')[p.args.logfile]))
+    logging.debug('taillog={}'.format(('False', 'True')[p.args.taillog]))
+    logging.debug('execFlag={}'.format(('False', 'True')[p.args.execFlag]))
 
     # check that they passed in at least one file to rename
     if len(p.largs) < 1:
@@ -263,16 +351,14 @@ def main():
     # logging.info(str(p.largs))
     # loop though the files and rename them
     for filename in p.largs:
+        p.fileWasDropped = False        # reset flag
         # trim the URI header off
         # passed in by Drag N Drop
         if 'file://' in filename:
             filename = filename[len('file://'):]
+            p.fileWasDropped = True
             logging.debug('Cut file:// from URI:head')
-
-        # NEW (not valid idea ?)
-        # if "'" in filename:
-        # filename = filename.replace("'", "\\'")	# escape any ' in filename
-        # logging.debug('Escaping apostrophe in '+filename)
+            logging.debug('file={}'.format(filename))
 
         # directory S01.TV (xxxx) -> S01.TV-[xxxx]
         if os.path.isdir(filename):
@@ -280,22 +366,18 @@ def main():
             filename = filename.replace(' (', '-[')
             filename = filename.replace(')', ']')
             os.rename(old_name, filename)
-            logging.debug('Dir rename='+old_name+' -> '+filename)
+            logging.debug('Dir rename={} -> {}'.format(
+                old_name,
+                filename))
         else:
-            logging.debug('calling RenameFile('+filename+')')
-            # logging.debug('with args='+str(p.args))
+            logging.debug('calling RenameFile({})'.format(filename))
+            # logging.debug('with args={}'.format(str(p.args)))
             RenameFile(p.args, filename)
 
     # exit successful
     if p.args.taillog and p.xTailPid != 0:
-        # os_killpid(p.xTailPid, signal=15)
-        '''
-        # killCmd = "/bin/kill %s" % p.xTailPid
-        # from subprocess import call
-        # call(killCmd, shell=True, executable='/bin/bash')
-        # os.popen("/bin/kill -9 "+p.xTailPid)
-        # remove_logfile(p.logFile)
-        '''
+        p.XTailKill()
+
     exit(0)
 
 
@@ -303,121 +385,128 @@ def RenameFile(args, filepath):
     """Renames a file with the given args options."""
     global p
 
+    logging.debug('{}'.format('RenameFile()'))
     # split the pathname and filename
     pathname = os.path.dirname(filepath)
     filename = os.path.basename(filepath)
+    logging.debug('file.fp={}'.format(pathname))
+    logging.debug('file.fn={}'.format(filename))
 
     # trim characters from the front
     if p.args.trimfront:
+        savename = filename
         filename = filename[p.args.trimfront:]
+        logging.debug('trimfr {} => {}'.format(savename, filename))
 
     # prepend string to the filename
     if p.args.prepend != "":
-        filename = p.args.prepend + filename
+        savename = filename
+        filename = '{}{}'.format(p.args.prepend, filename)
+        logging.debug('prepend {} => {}'.format(savename, filename))
 
     # trim characters from the back
     if p.args.trimback:
+        savename = filename
         filename = filename[:len(filename) - p.args.trimback]
+        logging.debug('trimbk {} => {}'.format(savename, filename))
 
-    # append string to the filename
+    # append string to filename
     if p.args.append != "":
-        filename = filename + p.args.append
+        savename = filename
+        filename = '{}{}'.format(filename, p.args.append)
+        logging.debug('append {} => {}'.format(savename, filename))
 
     # insert string value at posn value
     if p.args.insert:
         iStr = p.args.insert[0]				# string from tuple
         iPosn = p.args.insert[1]			# index from tuple
+        savename = filename
         # iStr, iPosn = (p.args.insert)			# get string and index
-        temp = (filename[0:int(iPosn)],
-            filename[int(iPosn):-1])  # split filename at index posn
-        filename = \
-            temp[0] + iStr + temp[1]  # re-assemble with str insert
+        # split filename at index posn
+        temp = (filename[0:int(iPosn)], filename[int(iPosn):-1])
+        filename = '{}{}{}'.format(     # re-assemble with str insert
+            temp[0],
+            iStr,
+            temp[1]
+        )
+        logging.debug('insert {} => {}'.format(savename, filename))
 
     # replace values if any (more than 1 -r "" "" allowed)
     if p.args.replace:
         for vals in p.args.replace:
+            savename = filename
             filename = filename.replace(vals[0], vals[1])
+            logging.debug('replace {} => {}'.format(savename, filename))
 
     # convert to lowercase if flag set
     if p.args.lowercase:
+        savename = filename
         filename = filename.lower()
+        logging.debug('lcase {} => {}'.format(savename, filename))
 
+    # convert to uppercase if flag set
+    if p.args.uppercase:
+        savename = filename
+        filename = filename.upper()
+        logging.debug('ucase {} => {}'.format(savename, filename))
+
+    # clean (remove) torrent download words from from filenames
     if p.args.mediastring:
-        (fileBaseName, fileExtension) = os.path.splitext(filename)
-        # fileBaseName = chrCleanFilename(fileBaseName)  # +fileExtension
-        fileBaseName = strCleanFilename(fileBaseName)  # +fileExtension
-        fileBaseName = videoNameFixer(fileBaseName)  # +fileExtension
-        filename = strFixAcronyms(fileBaseName) + fileExtension
+        savename = filename
+        (fbName, fExt) = os.path.splitext(filename)
+        fbName = fbName.replace('.', '_')       # '.' = underscore
+        fbName = fbName.replace(' ', '_')       # ' ' = underscore
+        # fbName = chrCleanFilename(fbName)     # +fExt
+        fbName = strCleanFilename(fbName)       # +fExt
+        fbName = videoNameFixer(fbName)         # +fExt
+        filename = '{}{}'.format(
+            strFixAcronyms(fbName), fExt)
+        logging.debug('mediastr {} => {}'.format(savename, filename))
 
+    # use traslate to map bad chars to good chars
     if p.args.mediaclean:
-        (fileBaseName, fileExtension) = os.path.splitext(filename)
-        filename = chrCleanFilename(fileBaseName)+fileExtension
+        savename = filename
+        (fbName, fExt) = os.path.splitext(filename)
+        filename = '{}{}'.format(
+            chrCleanFilename(fbName), fExt)
+        logging.debug('mediacln {} => {}'.format(savename, filename))
 
     # create the new pathname and rename the file
     new_filepath = os.path.join(pathname, filename)
     try:
         # check for verbose output
-        tmpPrnt = "%s -> %s" % (filepath, new_filepath)
+        tmpPrnt = '{} -> {}'.format(filepath, new_filepath)
         if p.args.verbose or not p.args.execFlag:
             print(tmpPrnt)
-            logging.debug('Rename '+tmpPrnt)
+            logging.debug('Rename {}'.format(tmpPrnt))
 
         if p.args.execFlag:
             os.rename(filepath, new_filepath)
-            logging.debug('Rename '+tmpPrnt+' Done')
-    #
+            logging.debug('Rename {} Done'.format(tmpPrnt))
+
     # Cheat Sheet: Writing Python 2-3 compatible code
     #   http://python-future.org/compatible_idioms.html#raising-exceptions
-    #
     except OSError as err:
-        print("Error renaming '%s': %s" % (filepath, err), file=stderr)
-        '''# python2
+        print('Error renaming {}: {}'.format(filepath, err), file=stderr)
+        if p.fileWasDropped:
+            notifyCmd = '{} -t {} \"{}\" \"{}\"'.format(
+                os_which('notify-send'),
+                5000,
+                'Error: {}'.format(filename),
+                'File Not renamed')
+            os_call(notifyCmd)
+        '''
+        # python2
         if version_info[0] < 3:
-            print >>sys.stderr, "Error renaming '%s': %s"  % (filepath, err.strerror)
+            print >>sys.stderr, \
+              "Error renaming '%s': %s"  % (filepath, err.strerror)
         # python3
         else:
             print("Error renaming '%s': %s" % (filepath, err), file=stderr)
         '''
 
-
-#
-# open a window with a tail of the logfile in it
-#
-def xTail():
-    """Open a ff-tail window and tail the logfile - for debugging."""
-    global p
-
-    #
-    # create the file if it doesnt exist
-    # truncate the file if it does exist
-    #
-    open(p.logFile, 'wb').close()
-
-    if not p.fftailCmd:
-        p.ffTailCmd = os_which('ff-tail')
-
-    # format command to create logtail window
-    tailCmd = "{} -n 50 -f {} &".format(p.ffTailCmd, p.logFile)
-    # create the window and get/save its process id
-    p.xTailPid = os_popen(tailCmd, shell=False, wait=False, ret_type='pid')
-    sleep(.5)
-    logging.debug('tailLogPid='+str(p.xTailPid))
-    return
     '''
-    method two - use a xterm for tail
-    requires importing subprocess
-
-    # build xterm command string for tail
-    xtermCmd =\
-        "xterm -title \"%s : logtail : %s\" -geometry %s -sb"\
-        + "+hold -e \"tail -n 100 -f %s\"&" % \
-        (p.cmdName, p.logFile, p.xTailGeom, p.logFile)
-
-    # subP = subprocess.call(xtermCmd, shell = True,
-    # executable='/bin/bash')		# xterm
-    '''
-
-    '''
+    # finding pid# and killing it
     # procName = "logtail"
 
     # pid_list = psutil.get_pid_list()
@@ -442,28 +531,14 @@ def xTail():
 
 def chrCleanFilename(name):
     """clean and replace some in appropriate chars from name."""
-    #
     # use translate - more pythonic
-    #
+    logging.debug('{}'.format('chrCleanFilename()'))
     chg__in = "(){} *.&"		# chg these
     chg_out = "[][]___+"		# to these
     lose_em = " ',!;~"		    # lose these
     trans = str.maketrans(chg__in, chg_out, lose_em)
 
     return (name.translate(trans))
-    '''
-    # previous method
-    bad=(["'",""],[",",""],["(","["],[")","]"],\
-        ["{","["],["}","]"],["!",""],[";",""],\
-        ["~",""],[" ","_"],['*','_'],['&','+'],\
-        [".","_"])
-
-    new = name
-    for c, rc in bad:
-        new = new.replace(c, rc)	# lose or replace
-
-    return(new)
-    '''
 
 
 # def clean_strings(self):
@@ -471,27 +546,36 @@ def strCleanFilename(name):
     """Remove internet download words from self.filename."""
     """called after the filename is copied and lowered()"""
 
-    # 'com' is way to common - figure another way to clean
+    # incoming words are separated with '_' that can be used
+    # to delete complex words from input, see h_264, aac2_0
     remove = [
+        '2009', '2010', '2011', '2012', '2013', '2014', '2015', '2016',
         'hdtv', 'x264', 'killers', 'asap', '[ettv]', '[rartv]', 'lol',
         'fov', '[eztv]', '[rarbg]', 'crimson', 'fum', 'batv', 'w4f',
         'xvid', 'internal', 'rarbg', 'immerse', 'dimension', '720p',
         '480p', 'msd', 'river', 'bajskorv', 'proper', 'repack', 'webrip',
-        '2hd', 'web', 'dl', 'aac2.0', 'h264', 'btn', 'failed', 'yestv',
+        '2hd', 'web-dl', 'aac2_0', 'h_264', 'btn', 'failed', 'yestv',
         'jive', 'convert', 'xclusive', 'fihtv', 'hevc', 'x265', 'tastetv',
-        'organic', 'mtg', 'xvid', 'chamee', 'afg', 'sneaky', 'www',
-        'tfpdl', 'com', 'nfo', '[vtv]', 'pdtvx264', 'pdtv', 'river',
-        'situs', 'medorc', 'pdtv', '[gwc]', 'e-Subs', 'aac', 'ze', 'tla',
+        'organic', 'mtg', 'xvid', 'chamee', 'afg', 'sneaky', 'www', 'fqm',
+        'tfpdl', 'com', 'nfo', '[vtv]', 'pdtvx264', 'pdtv', 'river', 'aaf',
+        'situs', 'medorc', 'pdtv', '[gwc]', 'e-Subs', 'aac2', 'ze', 'tla',
         'crooks', 'rb58', 'wnn', 'itv', 'eng', 'subs', 'pftv', 'c4tv',
         'alterego', 'spamtv', 'hero', 'fleet', '[cttv]', 'hulu', 'skgtv',
-        'deadpool', 'deflate',
+        'deadpool', 'deflate', 'com_', 'cbfm', 'fgt', 'sva', 'moritz',
+        'absinth', 'amzn', 'rofl', 'dsny', 'first', 'mindthegap', 'avs',
+        'ahdtv', 'futv', 'ntb', 'h264', 'aac', 'dd5_1', 'seriously',
+        'turbo', 'web', 'dl', 'heat', 'casstudio', 'brav', 'tlc', 'rtn',
+        'extended', 'walmart', 'dhd', 'jitb', '1080p', 'mfo', 'plutonium',
     ]
-    # logging.info('in='+name)
+    logging.debug('{}'.format('strCleanFilename()'))
     new = name.lower()
     if '[ettv]' in new or '[cttv]' or '[rartv]' in new:
         new = new.replace('[', '-[')		# spcl case-[[ec]ttv] prepend -
     for s in remove:				        # for every word in list
-        for p in ('.', '-', '_', '~'):		# for each .-_~<sp>
+        if '20' in s:                       # special case for years
+            if ' '+s in new:
+                new = new.replace(' '+s, '')  # repl with '' (removes it)
+        for p in ('.', '-', '_', '~'):	    # for each .-_~
             t = p+s					        # prepend p to s
             if t in new:
                 new = new.replace(t, '')    # replace with ''
@@ -502,67 +586,40 @@ def strCleanFilename(name):
     return(new.title())
 
 
-'''
-def strCleanFilename(name) :
-  ""
-  clean and replace some in appropriate strings from name
-  ""
-  remove = (	# internet TV video download words
-    '.hdtv','.x264','_x264','x264','-killers','-asap','[ettv]',
-    '[rartv]','-lol','-fov','[eztv]','[rarbg]','-crimson',
-    '-fum','-batv','-w4f','.XviD','.internal','-rarbg','-lo',
-    '-immerse','-dimension','-XviD','.720p','.480p','-mSD',
-    '-river','-bajskorv','.proper','.repack','.WebRip','~Ze',
-    '.webrip','-2hd','.web-dl','aac2.0','.h.264','-btn',
-    '-FailED','-YesTV','-jive','.convert','.Xclusive','-FiHTV',
-    '.hevc','.x265','-tastetv','-organic','-ORGANiC','-mtg',
-    '.xvid','-ChameE','.WEBRip','-afg','-SNEAkY','-480p',
-    'www.tfpdl.com-','.nfo','.[vtv]','Pdtv','-River','~situs',
-    '-medorc','.Repack','[GWC]','E-Subs','aac','_Hdtv')
-
-  new = name
-  for s in remove:		# for every word in list
-    if s in new:		# if found in list
-      new = new.replace(s, '')	# replace with ''
-    S = s.upper()		# also check after ucase
-    if S in new:		# and found in list
-      new = new.replace(S, '')	# replace with ''
-
-  if '..' in new:
-    new = new.replace('..', '.')	# special case - 2 dots together
-
-  return(new)
-'''
-
-
-#
 # Capitalize Names, Repair Episodes etc
 #   first word and first word after season stay caps
 #   the, and, of, a stay uncapped unless first word
-#
 def videoNameFixer(name):
     """Capitalize Names, Repair Episodes etc."""
-    logging.debug('VNF-in='+name)
-    new = name.title()				# get the first letter of words
-    new = new.replace('.', '_')			# all periods now underscore
-    new = new.replace(' ', '_')			# all spaces now underscore
-    words = new.split('_')			# now an array of words
-    toLowOK = False				# lower() of A,The,Of,And OKAY
-    seriesPart = False				# in the front part
-    new = ""					# start fresh
-    wc = 0					# word counter
-    for w in words:				# for each word
+    logging.debug('{}'.format('videoNameFixer()'))
+    retA = []                       # array to hold processed words
+    new = name.title()              # ucase first letter of each word
+    words = new.split('_')          # now we have an array of words
+    toLowOK = False                 # lower() of A,The,Of,And OKAY
+    seriesPart = False              # in the front part
+    wc = 0                          # word counter (for debugging)
+    logging.debug('VNF-words={}'.format(str(words)))
+    for w in words:                 # for each word
         # first word of showname or already SxxExx season/episode name
-        # isalpha gets words - isdigit gets 0-10 and (begin w S - len=6 ... gets SxxExx
-        logging.debug('for-top-word='+w)
+        # isalpha gets words - isdigit gets 0-10 and \
+        #   (begin w S - len=6 ... gets SxxExx
+        logging.debug('for-top-word={}'.format(w))
         # T0
-        if not wc:					# first word
+        if not wc:                  # first word
             if w.isalpha() or w[0].isdigit() or (w[0] == 'S' and len(w) == 6 and w[-1].isdigit()):
-                if w[1:3].isdigit() and w[4:6].isdigit():  # uppercase the e in S00E00
+                if w[1:3].isdigit() and w[4:6].isdigit():
+                    # uppercase the e in S00E00
                     w[3].upper()
-                new = w		 # word added
-                toLowOK = True   # (this part just once - Set toLowOK = True - see wc)		# ADDADD
-                logging.debug('T0 w-i='+w+' w-o='+w+' wc='+str(wc)+' w-l='+str(len(w)))		# 012345
+                retA.append(w)
+                # (this part just once - Set toLowOK = True - see wc)
+                toLowOK = True
+                # 012345
+                logging.debug('T0 w-i={} w-o={} wc={} w-l={}'.format(
+                    w,
+                    w,
+                    str(wc),
+                    str(len(w)))
+                )
                 wc += 1
                 continue
         #
@@ -582,17 +639,28 @@ def videoNameFixer(name):
                 nw = w.lower()  # lower added
             else:
                 nw = w		# keep same
-            new += '_'+nw
-            logging.debug('T1 w-i='+w+' w-o='+nw+' wc='+str(wc)+' w-l='+str(len(w)))
+            retA.append(nw)
+            logging.debug('T1 w-i={} w-o={} wc={} w-l={}'.format(
+                w,
+                nw,
+                str(wc),
+                str(len(w)))
+            )
             wc += 1
-            if seriesPart and not toLowOK:  # in Part3, Keep Caps - reset toLowOK = True
+            # in Part3, Keep Caps - reset toLowOK = True
+            if seriesPart and not toLowOK:
                 toLowOK = True
             continue
         # T2
-        elif w.isalpha():				# word add and keep going
+        elif w.isalpha():                   # word add and keep going
             nw = w
-            new += '_'+nw
-            logging.debug('T2 w-i='+w+' w-o='+nw+' wc='+str(wc)+' w-l='+str(len(w)))
+            retA.append(nw)
+            logging.debug('T2 w-i={} w-o={} wc={} w-l={}'.format(
+                w,
+                nw,
+                str(wc),
+                str(len(w)))
+            )
             wc += 1
             if seriesPart and not toLowOK:
                 toLowOK = True
@@ -600,34 +668,49 @@ def videoNameFixer(name):
         # T3
         elif w.isdigit():  # and lw >= 3 and lw <= 4 :	# season num is SEE
             lw = len(w)
-            if lw <= 2 or lw >= 5:				# not date or SEE or SSEE
+            if lw <= 2 or lw >= 5:              # not date or SEE or SSEE
                 nw = w
-                new += '_'+nw
-                wc += 1						# add and continue
-                logging.debug('T3-0 w-i='+w+' w-o='+nw+' wc='+str(wc)+' w-l='+str(len(w)))
+                retA.append(nw)
+                wc += 1                         # add and continue
+                logging.debug('T3-0 w-i={} w-o={} wc={} w-l={}'.format(
+                    w,
+                    nw,
+                    str(wc),
+                    str(len(w)))
+                )
                 continue
             nn = ['', '']
             if lw == 3:
-                nn = (w[0:1], w[1:3])				# assign value based on len
+                nn = (w[0:1], w[1:3])           # assign value based on len
             elif lw == 4:
                 nn = (w[0:2], w[2:4])
-                yr = int(nn[1])
-                if nn[0] == '20' and yr >= 10 and yr <= 20:	 # yr is 20xx (test)
+                yr = int(nn[1])         # yr is 20xx (test)
+                if nn[0] == '20' and yr >= 1 and yr <= 20:
                     nw = nn[0]+nn[1]
-                    new += '_'+nw
+                    retA.append(nw)
                     wc += 1
                     continue
-                    logging.debug('T3-1 w-i='+w+' w-o='+nw+' wc='+str(wc)+' w-l='+str(len(w)))
+                    logging.debug('T3-1 w-i={} w-o={} wc={} w-l={}'.format(
+                        w,
+                        nw,
+                        str(wc),
+                        str(len(w)))
+                    )
             #
             # fall thru (Failed Tosh.0)
             # fill in with zeros + numbers
             nw = 'S{:02d}E{:02d}'.format(int(nn[0]), int(nn[1]))
             # nw = 'S0'+w[0:1]+'E'+w[1:3]
             # logging.info('T3-2 word='+w)
-            new += '_'+nw
+            retA.append(nw)
             seriesPart = True
             toLowOK = False
-            logging.debug('T3-2 w-i='+w+' w-o='+nw+' wc='+str(wc)+' w-l='+str(len(w)))
+            logging.debug('T3-2 w-i={} w-o={} wc={} w-l={}'.format(
+                w,
+                nw,
+                str(wc),
+                str(len(w)))
+            )
             wc += 1
             continue
             # T4
@@ -636,34 +719,48 @@ def videoNameFixer(name):
             nn = w.lower().split('x')			# break into 2 parts
             # fill in with zeros + numbers
             nw = 'S{:02d}E{:02d}'.format(int(nn[0]), int(nn[1]))
-            new += '_'+nw				# add to the out string
+            retA.append(nw)
             seriesPart = True
             toLowOK = False
-            logging.debug('T4 w-i='+w+' w-o='+nw+' wc='+str(wc)+' w-l='+str(len(w)))
+            logging.debug('T4 w-i={} w-o={} w-l={} w-l={}'.format(
+                w,
+                nw,
+                str(wc),
+                str(len(w)))
+            )
             wc += 1
             continue
         # T5
         elif w.isalnum() and len(w) == 6:		# season is SxxExx
-            nw = 'S'+w[1:3]+'E'+w[4:6]
-            new += '_'+nw
+            nw = 'S{}E{}'.format(w[1:3], w[4:6])
+            retA.append(nw)
             seriesPart = True
             toLowOK = False
-            logging.debug('T5 w-i='+w+' w-o='+nw+' wc='+str(wc)+' w-l='+str(len(w)))
+            logging.debug('T5 w-i={} w-o={} wc={} w-l={}'.format(
+                w,
+                nw,
+                str(wc),
+                str(len(w)))
+            )
             wc += 1
             continue
 
-        # end  of loop - if tests above don't hit and continue - add the word
+        # T6 - end  of loop - if tests above don't
+        # hit & continue - add the word intact
         if w != "":
             nw = w
-            if not wc:
-                new = nw  # if word 0 - and we get here - dont add underscore
-            else:
-                new += '_' + nw			# else do
-        logging.debug('T6 w-i='+w+' w-o='+nw+' wc='+str(wc)+' w-l='+str(len(w)))
+            retA.append(nw)
+        logging.debug('T6 w-i={} w-o={} wc={} w-l={}'.format(
+            w,
+            nw,
+            str(wc),
+            str(len(w)))
+        )
         wc += 1
         if seriesPart and not toLowOK:
             toLowOK = True
-    return(new)
+    logging.info('VNF-retA={}'.format(repr(retA)))
+    return('_'.join(retA))      # return arrayContents_strings
 
 
 def strFixAcronyms(name):
@@ -672,27 +769,29 @@ def strFixAcronyms(name):
     Acros = {
         'csi': 'CSI', 'ncis': 'NCIS', 'svu': 'SVU', 'us': 'US',
         'ddd': 'DDD', 'w1a': 'W1A', 'usa': 'USA', 'pd': 'PD',
-        'lao': 'LAO', 'bbq': 'BBQ', 'snl': 'SNL',
+        'lao': 'LAO', 'bbq': 'BBQ', 'snl': 'SNL', 'dcs': 'DCs',
     }
     Abbrevs = {
         'Law_and_Order': 'LAO', 'Saturday_Night_Live': 'SNL',
-        'New_Orleans': 'NO', 'Los_Angeles': 'LA', 'Law_&_Order': 'LAO'
+        'New_Orleans': 'NO', 'Los_Angeles': 'LA', 'Law_&_Order': 'LAO',
+        'S_H_I_E_L_D': 'SHIELD',
     }
+    logging.debug('{}'.format('strFixAcronyms()'))
     words = name.split('_')
-    repl = ""
+    # for each word, see if it matches and Acronym
+    # if it does, then replace that word in the name
     for w in words:			# for each of my words
-        try:
-            repl = Acros[w.lower()]		# lookup replacement
+        repl = Acros.get(w.lower(), "")      # return "" if none
+        if repl != "":          # if found - replace with Acronym
             name = name.replace(w, repl)  # found - replace
-            logging.debug('repl='+repl)
-        except:
-            pass				# else - do nothing
+            logging.debug('word={} => repl={}'.format(w, repl))
 
     for i in Abbrevs:			# for each abbrev in Dict
         if i in name:			# if long name found
-            repl = Abbrevs[i]			# lookup replacement
-            name = name.replace(i, repl)  # found - replace (abbrev)
-
+            repl = Abbrevs.get(i, "")   # return "" if none
+            if repl != "":              # if found-replace (abbrev)
+                name = name.replace(i, repl)  # found - replace (abbrev)
+                logging.debug('word={} => repl={}'.format(i, repl))
     return (name)
 
 
