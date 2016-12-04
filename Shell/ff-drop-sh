@@ -1,0 +1,531 @@
+#!/usr/bin/env bash
+#  linted with atom/shellcheck 2016-01-08
+#
+# called by ff-dropper when used in the ff-enc/ff-copy2 mode
+# called by ff-recode-dir which is a [BTN] press in ff-analyze
+#
+# 2016-09-23 - changed debug to be logging instead
+# 2016-10-16 - created createExecStr function - build ff-enc cmdlines
+#   function returns exec string already built-in
+#
+FALSE=0
+TRUE=1
+_TOSCRN_=$TRUE
+_TOSCRN_=$FALSE
+_TOFILE_=$TRUE
+_TOFILE_=$FALSE
+_TOPOPUP_=$FALSE
+_TOPOPUP_=$TRUE
+# logging output to screen and logfile
+# based on _TOSCRN_ and/or _TOFILE_
+# being TRUE or FALSE
+#_STDERR_="/dev/fd/1"
+_STDOUT_="/dev/fd/2"
+IFSDEF=$' \t\n'                 # for resetting IFS
+IFS=$' \t\n'                    # Default IFS=<space><newline><tab>
+_XTAIL_=$FALSE
+TAILDISP='ff-tail'  # method of tail display (xterm, mate-terminal, ff-tail)
+
+cmdName="$(basename "$0")"
+logFile="/tmp/${cmdName}.log"
+miCmd=$(which 'mediainfo')
+ffCpy=$(which 'ff-copy2')
+ffEnc=$(which 'ff-encmod')
+VERSION='v0.2.8'
+EDITED='2016-11-06'
+# lint Status: = True
+
+#
+# logging output to screen and logfile
+# based on _TOSCRN_ and/or _TOFILE_
+# being TRUE or FALSE
+#
+function logging()
+{
+  set +o errexit
+  ((_TOSCRN_)) || ((_TOFILE_)) && _DS_=$(date +"%H:%M:%S")
+  ((_TOSCRN_)) || ((_TOFILE_)) && _INFO_="FN=${FUNCNAME[1]},LN=${BASH_LINENO[0]}"
+  ((_TOSCRN_)) && echo -e "[${_DS_}]-${_INFO_}}-$*" > "${_STDOUT_}"
+  ((_TOFILE_)) && echo -e "[${_DS_}]-${_INFO_}}-$*" >> "${logFile}"
+  set -o errexit
+}
+
+#
+# display gui popup message on users screen
+# based on _TOPOPUP_ being TRUE to work
+#
+function notify()
+{
+  set +o errexit;
+  ((_TOPOPUP_)) && _DS_=$(date +"%H:%M:%S");
+  ((_TOPOPUP_)) && notify-send "[${_DS_}]-$*";
+  set -o errexit;
+}
+
+function flagStatus() { (($1)) && echo "TRUE" || echo "FALSE"; }
+
+function Usage()
+{
+  cat <<EOF_Usage
+
+    ${cmdName} is usally initiated by ff-dropper to
+    start the ffmpeg Xcoding of a video file.  It is
+    usually not run directly by a user.
+
+    Usage: ${cmdName} [-d|-D] [-h] [-F <Frame-Rate>] <mode> <filename>
+
+    Flags:
+        -d)ebug (set _DEBUG_ to TRUE) || -D)ebug (and set _XTAIL_ to TRUE)
+        -h)elp  (Display this message)
+        -F)rame (Provide a fallback framerate for BAD files)
+
+    Version: ${VERSION}   Last Edited: ${EDITED}
+
+EOF_Usage
+  exit 1
+}
+
+#
+# read and return information from video file
+#
+function miFile()
+{
+  file="$1"
+
+  IFS='~'
+  arr=($(${miCmd} --Inform="Video;%FrameRate%~%AspectRatio/String%~" "${file}"))
+  unset IFS
+  echo "${arr[0]}~${arr[1]}"
+  IFS=${IFSDEF}                     # reset field sep
+  return
+}
+
+#
+# if no arg given - put up yad form
+# user will pick the ff-copy mode
+# else just return flags for arg
+#
+function ffPick()
+{
+  Arg1="$1"
+  #
+  # hash table of flags for various ffcopy2 modes
+  # https://stackoverflow.com/questions/1494178/how-to-define-hash-tables-in-bash
+  #
+  declare -A copymodes=(\
+    ["copy2cc"]="-cc -st -gf -ex" \
+    ["copy2ccrm"]="-cc -st -rm -gf -ex" \
+    ["copy2tc"]="-tc -st -gf -ex" \
+    ["copy2tcrf"]="-tc -st -rf -gf -ex" \
+    ["copy2vs"]="-vs -st -rf -gf -ex" \
+    ["copy2as"]="-vs -st -rf -gf -ex" \
+    ["copy2vo"]="-vo -st -rf -gf -ex" \
+  )
+  #
+  # labels for selection "mode-hash:description"
+  #
+  declare -A copylabels=(\
+    ["copy2cc"]="copy2cc:Container Copy" \
+    ["copy2ccrm"]="copy2ccrm:Container Copy Remove" \
+    ["copy2tc"]="copy2tc:Title Copy" \
+    ["copy2tcrf"]="copy2tcrf:Title Copy Replace" \
+    ["copy2vs"]="copy2vs:Video Shrink" \
+    ["copy2as"]="copy2as:Audio Shrink" \
+    ["copy2vo"]="copy2vo:Volume Enhance" \
+  )
+  #
+  # if mode on CLI, look up flags
+  #
+  if ! [[ -z "${Arg1}" ]]; then
+    flags=${copymodes["$Arg1"]}
+    logging "${Arg1} flags = ${flags}"
+    echo "${flags}"
+    return
+  fi
+
+  #
+  # if no mode on CLI, ask user
+  #
+  # build options str from table
+  #
+  m_opts=""
+  # build options Combo-Box str
+  #for m in "${!copymodes[@]}"; do
+  for m in "${!copylabels[@]}"; do
+    #m_opts+="${m},"
+    m_opts+="${copylabels[$m]},"
+  done
+
+  #
+  # yad combo-box dialog
+  #
+  yad_opts=(
+    --form
+    --title="ff-copy2 mode"
+    --text="pick a mode"
+    --image="logo.png"
+    --geometry=-25+25
+    --on-top
+    --button="Okay"
+    --button="Cancel"
+    --item-separator=","
+    --separator=''
+    --field="Mode":CB
+    "${m_opts}")
+
+  read -ra ans < <( yad "${yad_opts[@]}" )      # get user gui response
+  # notify "ans = $ans"
+  ans=${ans%:*}               # strip ':tail' from ans - leaves hash key
+  # notify "hash key = $ans"
+  flags=${copymodes["${ans}"]}  # lookup flags from modes with key
+  # notify "flags = ${flags}"
+  echo "${flags}"               # necessary as function return
+  return
+}
+
+#
+# all of these cmdStrings are the same except for the (softScale),
+# (aspectRatio), frameRate. (file) and myExit.  Maybe build myCmd
+# string as a function for each case
+#
+function createExecStr()
+{
+  local myFFcmd="${1}"
+  local myF="${2}"
+  local mySS="${3}"
+  local myA="${4}"
+  local myFile="${5}"
+  local myExit="${6}"
+  local myCmd=""
+
+  myCmd="$(printf "%s %s %s %s %s %s %s %s %s %s %s %s \'%s\'; %s" \
+    "${myFFcmd}" "-b 315k" "-a 64" "--st" "--ss=${mySS}" \
+    "--rate=${myF}"  "--aspect=${myA}" "--out=0" "--put=NEW" \
+    "--move" "--exec"  "--gf" "${myFile}" "${myExit}")"
+
+  echo "${myCmd}"       # return cmdLine ready to exec in bash
+  return
+}
+#
+# main()
+#
+set -o errexit                                          # exit on error
+set -o nounset                                          # no empty vars
+set -o pipefail                                         # fail pipe-errs
+#
+# create logfile, truncate if it exists
+#
+: > "${logFile}"
+
+#
+# 2016-01-14 - (changed to getopts)
+# Process CLI args
+#
+while getopts "dDhF:" opt; do
+  case "${opt}" in
+    d)
+      _TOSCRN_=$TRUE
+      logging "logging to screen set to TRUE on CLI"
+      logging "$@"        # log the command line
+      ;;
+    D)
+      _TOFILE_=$TRUE
+      logging "logging to $logFile set to TRUE on CLI"
+      logging "$@"        # log the command line
+      _XTAIL_=$TRUE
+      logging "_XTAIL_ flag set to TRUE on CLI"
+      ;;
+    F)
+      # note: this gets set by ff-recode-dir
+      defaultFR="${OPTARG}"
+      logging "default FR will be ${defaultFR}"
+      ;;
+    \?|h)
+      Usage
+      ;;
+  esac
+done
+shift $((OPTIND-1))
+
+logging "logging is on"
+logging "mediainfo command=${miCmd}"
+
+#
+# if not 2 args
+# warn, inform, exit
+#
+if [[ $# -eq "1" ]]; then
+  myMode=""
+  logging "calling programs mode=${myMode}"
+  file=$1; shift
+  logging "calling programs file=${file}"
+elif [[ $# -eq "2" ]]; then
+  myMode=$1; shift
+  logging "calling programs mode=${myMode}"
+  file=$1; shift
+  logging "calling programs file=${file}"
+else
+  Usage
+fi
+#
+# workout any debugging stuff from CLI
+#
+if ((_TOFILE_ && _XTAIL_)); then
+  tailTitle="${cmdName}_${logFile}"
+  tailLog="/usr/bin/tail -f ${logFile}"
+  tailGeom="60x8-25+75"
+  # build the exec string variables
+  case ${TAILDISP} in
+    mate-terminal)
+      TERM="/usr/bin/mate-terminal"
+      printf -v tailCmd \
+        "%s --title \"%s\" --geometry %s -x %s" \
+        "${TERM}" "${tailTitle}" "${tailGeom}" "${tailLog}";
+      tailKill="[mM]ate-terminal.*${logFile}";  # way to grep for pid
+    ;;
+    xterm)
+      TERM="/usr/bin/xterm"
+      printf -v tailCmd \
+        "%s -title \"%s\" -geometry %s -sb -e %s" \
+        "${TERM}" "${tailTitle}" "${tailGeom}" "${tailLog}";
+      tailKill="[xX]term.*${logFile}";          # way to grep for pid
+    ;;
+    ff-tail)
+      TERM=$(which 'ff-tail')
+      printf -v tailCmd "%s -n 25 -f %s" \
+        "${TERM}" "${logFile}";
+      tailKill="[fF]f-tail.*${logFile}";      # way to grep for pid
+    ;;
+  esac
+  logging "logFile=${logFile}"
+  logging "tailLog=${tailLog}"
+  logging "tailCmd=${tailCmd}"
+  logging "tailKill=${tailKill}"
+  #
+  # run the command
+  #
+  # usefull for logging tailCmd errors and failures
+  # ${tailCmd} >> "$logFile" 2>&1 &
+  ${tailCmd} &
+  # $$ is current process id
+  thisPid=$$
+  logging "thisPid=${thisPid}"
+fi
+
+# aspects:    16:9, 4:3, 3:2, 5:3, 2.40:1
+# frame rates:    24, 30, 25.0
+# softscale/:    720, 360p
+# scale sizes:    480, 480p
+#
+# helpfull internet coding help
+# on various shell coding
+#
+# Shell Script: Assignment-Or Operator (a= b || c)
+#   https://stackoverflow.com/questions/16878534/\
+#     shell-script-assignment-or-operator-a-b-c
+#
+# Bash Shell: Find Out If a Variable Is Empty Or Not
+#   http://www.cyberciti.biz/faq/\
+#     unix-linux-bash-script-check-if-variable-is-empty/
+#
+# Bash String Manipulation Examples – Length, Substring, Find and Replace
+#   http://www.thegeekstuff.com/2010/07/bash-string-manipulation/
+#
+# variables dont need to be "quoted" in [[ ]] - [[ is a shell keyword
+# do "quote" variables in [ ] -                 [ is a shell built-in
+# || and && work very well in [[ ]]
+# compare strings (or variable) to shell patterns (not regular expressions)
+#   [[ $S3Msg = ERROR:* ]] && S3Stat=1
+# one-liners
+# [ -z “$var” ] && echo “Empty”
+# [[ -z “$var” ]] && echo “Empty”
+# Check if $var is set using ! i.e. check if expr is false ##
+# [ ! -z “$var” ] || echo “Empty”
+# [[ ! -z “$var” ]] || echo “Empty”
+# Is it empty?
+# [ -z “$_JAIL” ] && echo “Yes” || echo “No”
+# "$(< file)" was roughly 200 times faster than `cat file`.
+# ((Idx = 0; Idx < $X; Idx++)) was roughly 200 times faster
+#   than using "Idx=`expr $Idx + 1`" in a loop and then testing $Idx -ge $X.
+#
+echo "logging to Screen status: $(flagStatus ${_TOSCRN_})"
+echo "logging to $logFile status: $(flagStatus ${_TOFILE_})"
+echo "_XTAIL_ status: $(flagStatus ${_XTAIL_})"
+
+#
+# we are being called to ffmpeg recode
+#
+if [[ "${myMode}" == "enc" ]]; then
+
+  # if a default passed in as arg - use it, otherwise fallback to std 23.976
+  defFr=${defaultFR:-'23.976'}
+  mInfo=$(miFile "$file")           # get FrameRate and AspectRatio of file
+  tFR=${mInfo%~*}                   # temp FR
+  tAR=${mInfo#*~}                   # temp AR
+  logging "fileinfo=FrameRate=${tFR}, AspectRatio=${tAR}"
+
+  myF=${tFR:-$defFr}         # right most of the time
+  myA=${tAR:-'16:9'}         # right most of the time
+  logging "chosen Frame-Rate=${myF}"
+  logging "chosen Aspect-Ratio=${myA}"
+
+  myExit="notify-send --expire-time=4000 'ff-enc ${file} Finished'"
+  #
+  # based on Aspect - figure out settings (CHANGE THIS - PRINTF)
+  #
+  case "${myA}" in
+    2.3*|2.4*)
+      # 2.40/2.35 widescreen
+      myA="2.40";
+      mySS="720:300";
+      myCmd="$(createExecStr \
+        "${ffEnc}" "${myF}" "${mySS}" "${myA}" "${file}" "${myExit}")";
+      #myC1="${ffEnc} -b 315k -a 64 --st --ss=720:300 --rate=$myF --aspect=$myA"
+      #myC2="--out=0 --put=NEW --move --exec --gf '$file'; $myExit"
+      #myCmd="${myC1} ${myC2}"
+      ;;
+    2.1*|2.2*)
+      # 2.20/2.1x widescreen
+      myA="2.20";
+      mySS="720:328";
+      myCmd="$(createExecStr \
+        "${ffEnc}" "${myF}" "${mySS}" "${myA}" "${file}" "${myExit}")";
+      #myC1="${ffEnc} -b 315k -a 64 --st --ss=720:328 --rate=$myF --aspect=$myA"
+      #myC2="--out=0 --put=NEW --move --exec --gf '$file'; $myExit"
+      #myCmd="${myC1} ${myC2}"
+      ;;
+    16:9|1.7*|1.8*)
+      # 16:9/1.78:1 and 1.85:1
+      myA="16:9";
+      mySS="720";
+      myCmd="$(createExecStr \
+        "${ffEnc}" "${myF}" "${mySS}" "${myA}" "${file}" "${myExit}")";
+      #myC1="${ffEnc} -b 315k -a 64 --st --ss=720 --rate=$myF --aspect=$myA"
+      #myC2="--out=0 --put=NEW --move --exec --gf '$file'; $myExit"
+      #myCmd="${myC1} ${myC2}"
+      ;;
+    16:10|1.6*)
+      # 16:10/1.60
+      myA="16:10";
+      mySS="720:450";
+      myCmd="$(createExecStr \
+        "${ffEnc}" "${myF}" "${mySS}" "${myA}" "${file}" "${myExit}")";
+      #myC1="${ffEnc} -b 315k -a 64 --st --ss=720:450 --rate=$myF --aspect=$myA"
+      #myC2="--out=0 --put=NEW --move --exec --gf '$file'; $myExit"
+      #myCmd="${myC1} ${myC2}"
+      ;;
+    4:3|5:4|1.3*|1.2*)
+      # 4:3/1.33:1 and 5:4/1.25:1
+      myA="4:3";
+      mySS="480";
+      myCmd="$(createExecStr \
+        "${ffEnc}" "${myF}" "${mySS}" "${myA}" "${file}" "${myExit}")";
+      #myC1="${ffEnc} -b 315k -a 64 --st --ss=480 --rate=$myF --aspect=$myA"
+      #myC2="--out=0 --put=NEW --move --exec --gf '$file'; $myExit"
+      #myCmd="${myC1} ${myC2}"
+      ;;
+    3:2|1.5*)
+      # 3:2/1.50:1
+      myA="3:2";
+      mySS="720:480";
+      myCmd="$(createExecStr \
+        "${ffEnc}" "${myF}" "${mySS}" "${myA}" "${file}" "${myExit}")";
+      #myC1="${ffEnc} -b 315k -a 64 --st --ss=720:480 --rate=$myF --aspect=$myA"
+      #myC2="--out=0 --put=NEW --move --exec --gf '$file'; $myExit"
+      #myCmd="${myC1} ${myC2}"
+      ;;
+    *)
+      # fall through default for ff-enc
+      myC1="${ffEnc} -b 315k -a 64 --st --rate=${myF} --out=0";
+      myC2="--put=NEW --move --exec --gf '${file}'; ${myExit}";
+      myCmd="${myC1} ${myC2}";
+      ;;
+  esac
+  #
+  # in terminal run bash shell
+  # in that shell run my command line
+  #
+  # will this run without a terminal and a shell ?  no!!
+  # Need bash. add --out=0 to myCmd.  Very little output.
+  # ff-enc-pass provides onscreen status of transcoding.
+  #
+  logging "Exit=${myExit}"
+  logging "Cmd=${myCmd}"
+  # here is where the work gets done
+  /bin/bash -c "${myCmd}" # testing
+else
+  # we are being called to ff-copy2
+  # myCL="|less"                        # set 4 terminal pause and wait
+  myCL=""
+
+  logging "Waiting for user okay"
+  myFlags="$(ffPick "${myMode}")"
+  if [[ "${myFlags}" == "" ]]; then
+    logging "User canceled operation"
+    exit 2
+  fi
+
+  myCmd="${ffCpy} ${myFlags} '${file}'${myCL}"
+  logging "myCmd=${myCmd}"
+
+  # comment out code
+  cat <<EOF_comment
+  case "${myMode}" in
+    # mode is video shrink
+    copy2vs*)
+      myCmd="${ffCpy} -vs -st -rf -gf -ex '$file'$myCL"    # replace old file
+      logging "${myMode}=video-shrink"
+      ;;
+    copy2as*)
+      # mode is audio shrink
+      myCmd="${ffCpy} -as -st -rf -gf -ex '$file'$myCL"    # replace old file
+      logging "${myMode}=audio-shrink"
+      ;;
+    copy2cc*)
+      # mode is copy to other format
+      # myCmd="${ffCpy} -cc -st -rm -gf -ex '$file'$myCL"    # remove old file
+      myCmd="${ffCpy} -cc -st -gf -ex '$file'$myCL"        # keep old file
+      logging "${myMode}=change-format-copy"
+      ;;
+    copy2vo*)
+      # mode is copy increase volume
+      myCmd="${ffCpy} -vo -st -rm -gf -ex '$file'$myCL"    # replace old file
+      logging "${myMode}=volume-increase"
+      ;;
+    *)
+      # default mode is title copy
+      myCmd="${ffCpy} -tc -st -rf -gf -ex '$file'$myCL"    # replace old file
+      logging "${myMode}=metadata-title-copy"
+      ;;
+  esac
+EOF_comment
+
+  # logging "myCmd=${myCmd}"
+  # here is where the work gets done
+  # notify "/bin/bash -c ${myCmd}"
+  # exit 0
+  /bin/bash -c "${myCmd}"
+fi
+
+#
+# if logging - remove the log
+# log can be watched with tail -[fF]
+#
+if [[ -e "${logFile}" ]]; then
+  logging "found logFile=${logFile}"
+  # find our logwindow pid
+  if ((_XTAIL_)); then
+    tailPid=$(pgrep -a -f "${tailKill}"|awk '!/yad/ {print $1}')
+    logging "tailPid=${tailPid}"
+    sleep .5
+    if [[ ! -z "${tailPid}" ]]; then
+      logging "Killing tail-process=${tailPid}"
+      # kill tailwindow by clicking window close
+      # kill -9 "${tailPid}"            # terminate the window
+    fi
+  fi
+  # logfile is truncated at script
+  # start, so don't remove it now
+  # logging "Removing ${logFile}"
+  # /bin/rm -f "${logFile}"            # remove the logfile
+fi
