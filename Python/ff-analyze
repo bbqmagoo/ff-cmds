@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """Analyze video files and report possible space reclaimed by re-coding."""
+# -*- mode: python -*-
+# -*- coding: utf-8 -*-
 from sys import argv, exit
 import re
 import os.path  # added 09-09-14 (magoo) for extent removal
@@ -37,16 +39,17 @@ class Program:
 
     def __init__(self):
         """this class holds common program info for this program."""
-        self.cmdName = os.path.basename(argv[0])  # save my cmdname (no path)
-        self.logFile = '/tmp/' + self.cmdName+'.log'  # my logging filename
+        self.cmdName = os.path.basename(argv[0])            # save my cmdname
+        self.logFile = '/tmp/{}.log'.format(self.cmdName)   # logging filename
         self.defLogLevel = 20				# default log level (INFO)
         self.version = "v0.2.4"				#
-        self.lastEdit = "2016-09-29"		#
+        self.lastEdit = "2016-10-12"		#
         self.lintStatus = True              # been linted by flake8
-        self.PATH = "/home/magoo/.bin:"\
-            + "/home/magoo/.bin/ff:"\
-            + "/usr/local/bin:"\
-            + "/usr/local/bin:/usr/bin:/bin"
+        self.PATH = ':'.join([
+            "/home/magoo/.bin",
+            "/usr/local/bin",
+            "/usr/bin",
+            "/bin"])
         self.args = ""					# command args
         self.largs = ""					# command files
         self.mediaInfo = ""				# mediainfo command
@@ -69,12 +72,16 @@ class Program:
 # Inkscape can be used to create svg vector files
 #
 # Icon Theme Specification:
-#   http://standards.freedesktop.org/icon-theme-spec/icon-theme-spec-latest.html#install_icons
+#   http://standards.freedesktop.org/icon-theme-spec/\
+#     icon-theme-spec-latest.html#install_icons
 # How to define an icon for a Gedit plugin written in Python:
-#   https://stackoverflow.com/questions/5792437/how-to-define-an-icon-for-a-gedit-plugin-written-in-python
+#   https://stackoverflow.com/questions/5792437/\
+#     how-to-define-an-icon-for-a-gedit-plugin-written-in-python
 # Using SVG For Flexible, Scalable, and Fun Backgrounds, Part I & II:
-#   http://alistapart.com/article/using-svg-for-flexible-scalable-and-fun-backgrounds-part-i
-#   http://alistapart.com/article/using-svg-for-flexible-scalable-and-fun-backgrounds-part-ii
+#   http://alistapart.com/article/using-svg-for-flexible-\
+#     scalable-and-fun-backgrounds-part-i
+#   http://alistapart.com/article/using-svg-for-flexible-\
+#     scalable-and-fun-backgrounds-part-ii
 # python scour:
 #   http://www.codedread.com/scour/
 # Openclipart:
@@ -104,7 +111,7 @@ def main():
         prog=p.cmdName,
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description='Print recoding details of video file(s)',
-        epilog=p.cmdName + ' ' + p.version + ' ' + p.lastEdit
+        epilog='{} {} {}'.format(p.cmdName, p.version, p.lastEdit)
     )
     parser.add_argument(
         '--osdFlag',
@@ -118,15 +125,21 @@ def main():
         '-ll',
         required=False,
         type=str,
-        default='20',
-        help='loglevel=DEBUG|INFO|WARNING|ERROR|CRITICAL', metavar=''
+        default='INFO',
+        metavar='',
+        choices=[
+            '10', '20', '30', '40', '50',
+            'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL',
+            'debug', 'info', 'warning', 'error', 'critical'
+        ],
+        help='loglevel = DEBUG | INFO | WARNING | ERROR | CRITICAL'
     )
     parser.add_argument(
         '--logfile',
         '-lf',
         action='store_true',
         required=False,
-        help='log to ' + p.logFile + ' instead of the screen'
+        help='log to {} instead of the screen'.format(p.logFile)
     )
 
     #
@@ -135,8 +148,7 @@ def main():
     #
     p.args, p.largs = parser.parse_known_args()
     check_logging_args_argparse(p.args, p.logFile)  # get loglvl, init logging
-
-    logging.debug('log level=' + str(p.args.logging))
+    logging.debug('log level={}'.format(p.args.logging))
 
     # establish my path
     os.environ['PATH'] = p.PATH
@@ -169,14 +181,14 @@ def main():
         instead I will just cd into dirArg and glob there
         """
         dirArg = p.largs[0]						# save dir name arg
-        logging.debug('dirArg='+dirArg)
+        logging.debug('dirArg={}'.format(dirArg))
         p.largs = []						# reset largs to ""
         dirArg = dirArg.rstrip('/')			# strip trailing slash if there
         os.chdir(dirArg)					# glob was failing sq brackets
         p.largs = glob.glob('*')			# glob * in dir
-        logging.debug('# of p.largs='+str(len(p.largs)))
+        logging.debug('# of p.largs={}'.format(str(len(p.largs))))
         sort_nicely(p.largs)
-        # logging.info('files: '+str(p.largs))
+        # logging.info('files: {}'.format(str(p.largs)))
     else:
         dirArg = os.getcwd()
         dirArg = dirArg.rstrip('/')
@@ -188,22 +200,22 @@ def main():
         filesParentDir = dirArg[dirArg.rindex('/')+1:]
     else:
         filesParentDir = dirArg
-    logging.debug('files parent='+filesParentDir)
+    logging.debug('files parent={}'.format(filesParentDir))
 
     #
     # return qualified path/filename for
     # mediainfo
     #
     p.mediaInfo = os_which('mediainfo')
-    logging.debug('mediainfo='+p.mediaInfo)
+    logging.debug('mediainfo={}'.format(p.mediaInfo))
 
     # headers not needed if gui list dialog
     # otherwise print headers
     if not p.args.osdFlag:
-        print('{:<44}{:>10}{:>10}{:>10}'.format(		# columns
+        print('{:<44}|{:^10}|{:^10}|{:^10}'.format(		# columns
             'Video-Filename', 'Size', 'Trans', 'Freed'))
-        print('{:<45}{:<10}{:<10}{:<10}'.format(		# header line
-            '='*44+'|', '='*9+'|', '='*9+'|', '='*9))
+        print('{:<44}|{:<10}|{:<10}|{:<10}'.format(		# header line
+            '=' * 44, '=' * 10, '=' * 10, '=' * 10))
 
     sizeT = sizeO = sizeF = 0				# init totals counters
 
@@ -221,8 +233,8 @@ def main():
             dSize = 0
         # if not gui - print line
         if not p.args.osdFlag:
-            print('{:<44}{:>10}{:>10}{:>10}'.format(		# print a line
-                f[0:44],					# filename
+            print('{:<44}{:>10}{:>11}{:>11}'.format(		# print a line
+                f[0:45],					# filename
                 phr(int(fSize), 1),				# size orig size
                 phr(int(nSize), 1),				# new transcoded size
                 phr(dSize, 1)))					# difference
@@ -240,10 +252,10 @@ def main():
 
     # footers and totals not needed if gui list dialog
     if not p.args.osdFlag:
-        print('{:<45}{:<10}{:<10}{:<10}'.format(    # footer line
-            '='*44+'|', '='*9+'|', '='*9+'|', '='*9))
-        print('{:<44}{:>10}{:>10}{:>10}'.format(    # totals line
-            ' '*44,
+        print('{:<44}|{:<10}{:<10}{:<10}'.format(    # footer line
+            '=' * 44, '=' * 11, '=' * 11, '=' * 11))
+        print('{:<44}|{:^11}{:^11}{:^11}'.format(    # totals line
+            ' ' * 44,
             phr(sizeO),
             phr(sizeT),
             phr(sizeF)))
@@ -281,25 +293,31 @@ def bldYadLine(f, fs, ns, ds):
 
 def displayYad(title, buf):
     """Calls YAD to display list dialog on-screen."""
-    # new test code
-    #
-    # for f in S01E*.*;do ff-drop-sh enc $f > /dev/null 2>&1; done
-    # set the text,icon,tooltip,command and
-    # logfile name for the transcode button
-    #
-    #      butn text   icon    tool-tip text        actual command
+
     # window NOT closed - ff-recode-dir called by button - all files processed
-    buttonCommand =\
-        "Recode-All-Files!FFmpeg!ffmpeg-recode-all-files:nohup ff-recode-dir"
+    buttonCommand = '{}!{}!{}:{}'.format(
+        'Recode-All-Files',                     # button text
+        'FFmpeg',                               # button icon
+        'ffmpeg-recode-all-files',              # tooltip
+        'nohup ff-recode-dir')                  # button command
     # close window - selected files processed by ff-recode-dir
-    buttonSelect =\
-        "Recode-Selected-Files!FFmpeg!ffmpeg-recode-selected-files:0"
+    buttonSelect = '{}!{}!{}:{}'.format(
+        'Recode-Selected-Files',                # button text
+        'FFmpeg',                               # button icon
+        'ffmpeg-recode-selected-files',         # tooltip
+        '0')                                    # exit code
     # close window - no further action
-    buttonClose =\
-        "Close-Window!Gnome-colors-window-close!Close window:2"
+    buttonClose = '{}!{}!{}:{}'.format(
+        'Close-Window',                         # button text
+        'gtk-quit',                             # button icon
+        'Close-window',                         # tooltip
+        '2')                                    # exit code
     # window NOT closed - ff-kill-recode called by button
-    buttonKill =\
-        "Kill-Recode!cancel!Kill-errant-recode:ff-kill-recode -e"
+    buttonKill = '{}!{}!{}:{}'.format(
+        'Kill-Recode',                          # button text
+        'gtk-cancel',                               # button icon
+        'Kill-errant-recode',                   # tooltip
+        'ff-kill-recode -e')                    # button command
     '''
     dialogText =\
         "[Recode-Files] | [Recode-Selected]=Recode All / Selected, " +\
@@ -354,8 +372,7 @@ def displayYad(title, buf):
     # convert into a string and pass to ff-recode-dir.
     #
     if p.yadReturn:
-        logging.debug(str(p.yadReturn))
-        # cmdStr = "nohup {} -e %s &" % ' '.join(p.yadReturn)
+        logging.debug('{}'.format(str(p.yadReturn)))
         cmdStr = 'nohup ff-recode-dir -e {} &'.format(
             os_which('ff-recode-dir'),
             ' '.join(p.yadReturn)
@@ -382,13 +399,14 @@ def sanitizeLine(strIn):
 def validate_video(fileIn):
     """check extent of fileIn against a known extents, good return(True)."""
     valid_Extents = {
-        ".mp4": True, ".mkv": True, ".avi": True, ".ogg": True, ".m4v": True,
-        ".mov": True, ".flv": True, ".wmv": True, ".vob": True, ".ts": True,
-        ".mp4": True,
+        ".mp4": True, ".mkv": True, ".avi": True,
+        ".ogg": True, ".m4v": True, ".mov": True,
+        ".flv": True, ".wmv": True, ".vob": True,
+        ".mp4": True, ".ts": True,
     }
     (fileIn_base, fileIn_ext) = os.path.splitext(fileIn)
-
-    return(valid_Extents.get(fileIn_ext, False))  # default=False, valid=True
+    # default=False, valid=True
+    return(valid_Extents.get(fileIn_ext, False))
 
 
 def calc_audio_size(audio_bitrate, time):
@@ -421,7 +439,8 @@ def calc_video_size(bitrate, ab, time):
 #
 # def phr(size, precision)
 #
-# https://code.activestate.com/recipes/577081-humanized-representation-of-a-number-of-bytes/
+# https://code.activestate.com/recipes/\
+#   577081-humanized-representation-of-a-number-of-bytes/
 #
 def phr(size, precision=2):
     """Return a human readable string string of any number of bytes."""
@@ -437,14 +456,13 @@ def phr(size, precision=2):
 
 
 def get_mediainfo(fileIn):
-    """open the file with mediainfo, return filesz, dur, w:h, frame_rate"""
+    """open the file with mediainfo, return files, dur, w:h, frame_rate"""
     global ff
     global p
 
     myQuery =\
         "General;%FileSize%~%Duration/String3%~%Duration%\nVideo;"\
         + "~%Width%:%Height%~%FrameRate%~%DURATION%"
-    # sysCmd = ('%s --Inform=\"%s\" \"%s\"') % (p.mediaInfo, myQuery, fileIn)
     sysCmd = '{} --Inform=\"{}\" \"{}\"'.format(
         p.mediaInfo,
         myQuery,
@@ -464,4 +482,7 @@ def sort_nicely(l):
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        exit(1)
