@@ -1,0 +1,205 @@
+#!/usr/bin/env bash
+# -*- mode: sh -*-
+# -*- coding: utf-8 -*-
+#
+# using yad --text-info dialog and unix diff
+# to make lightweight windowed diff display.
+# takes 1 argument - ff-?????
+# uses find to locate file in .bin and git
+# diffs both files and displays in yad text-info
+# dialog
+#
+# http://sourceforge.net/p/yad-dialog/tickets/220/
+#
+# How to check file size in python?
+#  https://stackoverflow.com/questions/2104080/how-to-check-file-size-in-python
+#
+# Last Edit: 2016-10-25 (magoo)
+# Version: = v0.1.4
+# lint Status: = TRUE
+#
+FALSE=0
+TRUE=1
+_TOSCRN_=$FALSE
+_TOSCRN_=$TRUE
+_TOFILE_=$TRUE
+_TOFILE_=$FALSE
+# _TOPOPUP_=$FALSE
+# execFlag=$FALSE
+# logging output to screen and logfile
+# based on _TOSCRN_ and/or _TOFILE_
+# being TRUE or FALSE
+_STDERR_="/dev/fd/1"
+_STDOUT_="/dev/fd/2"
+IFSDEF=$' \t\n'                 # for resetting IFS
+IFS=$IFSDEF                     # Default IFS=<space><newline><tab>
+cmdName="$(basename "$0")"
+logFile="/tmp/${cmdName}.log"
+iPath="/usr/share/icons"
+pigtail32="${iPath}/Pigtails/Pigtail_32x32.png"
+pigtail16="${iPath}/Pigtails/Pigtail_16x16.png"
+bin="/usr/local/bin"                # the cmd found here
+dtp="/usr/share/applications"       # desktop launcher files
+git="/other/src/gitclone/ff-cmds"   # git src here
+dtpFlag=$FALSE                      # not desktop by default
+locns=()                            # save filenames to diff
+#
+# logging output to screen and logfile
+# based on _TOSCRN_ and/or _TOFILE_
+# being TRUE or FALSE
+#
+function logging()
+{
+  set +o errexit
+  ((_TOSCRN_)) || ((_TOFILE_)) && _DS_=$(date +"%H:%M:%S")
+  ((_TOSCRN_)) || ((_TOFILE_)) && _INFO_="FN=${FUNCNAME[1]},LN=${BASH_LINENO[0]}"
+  ((_TOSCRN_)) && echo -e "[${_DS_}]-${_INFO_}}-$*" > "${_STDOUT_}"
+  ((_TOFILE_)) && echo -e "[${_DS_}]-${_INFO_}}-$*" >> "${logFile}"
+  set -o errexit
+}
+
+#
+# bash version of python/perl die()
+# Print an error message and exit with given status
+# call as: die status "message" ["message" ...]
+# https://www.dartmouth.edu/~rc/classes/ksh/print_pages.shtml
+# https://stackoverflow.com/questions/7868818/\
+#   in-bash-is-there-an-equivalent-of-die-error-msg
+#
+function die()
+{
+  local exitStatus=${1}; shift
+  echo -e "${BASH_SOURCE[1]} Died at ${BASH_LINENO[0]} in ${FUNCNAME[1]}()" > \
+    ${_STDERR_}
+  for i in "$@";
+  do
+    echo -e "${i}" > ${_STDERR_}
+  done
+  exit "${exitStatus}"
+}
+
+function Usage()
+{
+cat <<EOF
+
+  diff file(s) and display in yad dialog window
+
+  Usage: ${cmdName} [flags] <file>
+  flags:
+    -d)esktop files (diff /usr/share/applications/desktop files
+                      instead of command files)
+    -h)elp (show help info)
+
+EOF
+  exit 1
+}
+
+#
+# main()
+#
+set -o errexit                                          # exit on error
+set -o nounset                                          # no empty vars
+set -o pipefail                                         # fail pipe-errs
+
+while getopts "dh" opt
+do
+  case $opt in
+    d)
+      dtpFlag=$TRUE										# desktop files
+      ;;
+    \?|h)
+      Usage
+      ;;
+  esac
+done
+shift $((OPTIND - 1))
+
+if [[ "$#" -eq "0" ]]; then
+  Usage
+fi
+
+file="$1"
+
+trap "rm -f /tmp/fifo" 0
+trap "rm -f /tmp/fifo; exit 1" 1 2 3 15
+# trap "rm -f /tmp/fifo; exit 1" ERR
+
+mkfifo /tmp/fifo                # create fifo (pipe)
+exec 3<> /tmp/fifo              # assign it filehandle 3
+
+#
+# find edited file1, file2 in (bin), (git)
+#
+locns=()
+
+# if desktop files
+if [[ ${dtpFlag} -eq $TRUE ]]; then
+  bin="${dtp}"                # desktop files
+  git="${git}/Desktop"        # same
+  reMove='OLD'
+else
+  reMove='Desktop'
+fi
+
+# 2 files given - just use
+# those filenames (regular)
+if [[ $# -eq 2 ]]; then
+  for i in "${1}" "${2}"
+  do
+    if ! [[ -f $i ]]; then      # not found - error out
+      die 1 \
+        "" \
+        "Error: cant find your file: $i" \
+        ""
+    fi
+  done
+  locns=("${1}" "${2}")           # set the names
+else
+  for v in "${bin}" "${git}"      # location 1 and 2 (bin, git)
+  do
+    set +o errexit
+    fileFound=$(find "${v}" -name "$file*" | grep -v "${reMove}")
+    if [[ -z "${fileFound}" ]]; then
+      die 1 \
+        "" \
+        "Error: ${v}/${file} not found" \
+        ""
+    else
+      locns+=("${fileFound}")               # save path/file in array
+      logging "$v: ${fileFound}"
+    fi
+  done
+fi
+
+# update git button for yad dialog
+buttonCP="/bin/cp -f ${locns[0]} ${locns[1]}"
+buttonUpG="Update-Git!${pigtail16}!Update-File-In-Git:${buttonCP}"
+
+# [BG] waiting on fifo-pipe
+yad \
+  --text-info \
+  --title="$cmdName $file" \
+  --geometry=400x350-50+50 \
+  --text="$cmdName $file" \
+  --image="$pigtail32" \
+  --image-on-top \
+  --window-icon="$pigtail32" \
+  --no-focus \
+  --no-markup \
+  --on-top \
+  --button="gtk-close:0" \
+  --button="$buttonUpG" \
+  --tail \
+  <&3 &
+
+if [[ ${#locns[*]} -eq 2 ]]; then
+  logging "${locns[0]} --- ${locns[1]}"
+  ls -l "${locns[0]}" "${locns[1]}"
+  diff "${locns[0]}" "${locns[1]}" >&3    # diff files [FG] to pipe
+else
+  die 1 \
+    "" \
+    "Error: something went horribly wrong" \
+    ""
+fi
+rm -f /tmp/fifo
