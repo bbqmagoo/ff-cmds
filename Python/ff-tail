@@ -1,0 +1,266 @@
+#!/usr/bin/env python3
+"""yad --Text-info windowed dialog interface to /usr/bin/tail command."""
+# -*- mode: python -*-
+# -*- coding: utf-8 -*-
+from sys import argv, exit
+import os.path
+import argparse
+from magoo.logtools import check_logging_args_argparse, logging
+from magoo.proctools import os_which, os_popen, os_getpid
+from tempfile import mkdtemp
+import atexit
+from yad import YAD
+
+
+# information about this program (cmdname, edit date, version ...)
+class Program:
+    """This class hold common program info for this program."""
+
+    def __init__(self):
+        """this class holds common program info for this program."""
+        self.cmdName = os.path.basename(argv[0])            # save my cmdname
+        self.logFile = '/tmp/{}.log'.format(self.cmdName)   # logging filename
+        self.defLogLevel = 20				# default log level (INFO)
+        self.version = "v0.1.0"				#
+        self.lastEdit = "2016-10-25"		#
+        self.lintStatus = True              # been linted by flake8/pep8
+        self.PATH = ':'.join([
+            "/home/magoo/.bin",
+            "/usr/local/bin",
+            "/usr/bin",
+            "/bin"])
+        self.args = ""					# command args
+        self.largs = ""					# command files
+        self.iconPath = '/usr/share/icons'
+        # https://docs.python.org/2/library/os.path.html#os.path.normpath
+        # self.pigtail32 = os.path.normpath(os.path.join(
+        #    self.iconPath,
+        #    'Pigtails',
+        #    'Pigtail_32x32.png'))
+        self.pigtail32 = 'cabview'
+        self.tailCmd = ""               # path of tail command
+        self.fifoDir = ""               # fifo tempdir
+        self.fifoName = ""              # name of tail fifo
+        self.yadPid = ""                # actual yad pid
+        self.yadSHPid = ""              # files returned by YAD
+
+    # https://stackoverflow.com/questions/1430446/\
+    #   create-a-temporary-fifo-named-pipe-in-python#1430566
+    def createFifo(self):
+        """Create a temporary fifo."""
+        self.fifoDir = mkdtemp()
+        self.fifoName = os.path.join(self.fifoDir, 'fifo')
+        os.mkfifo(self.fifoName)
+
+    def removeFifo(self):
+        """Remove temporary fifo."""
+        logging.info('removeFifo called')
+        os.unlink(self.fifoName)
+        os.rmdir(self.fifoDir)
+
+    # display the YAD dialog window [BG] (waiting for a fifo stream)
+    def displayTextWin(self):
+        """Build and display YAD text-info dialog."""
+        yadCmd = \
+            '{} {} {}={} {}={} {} {}={} {} {}={} {} {} {} {} {} {} &'.format(
+                os_which('yad'),
+                '--text-info',
+                '--title',
+                '\"{} {}\"'.format(self.cmdName, self.fifoDir),
+                '--text',
+                '\"{} {}\"'.format(self.cmdName, self.args.file2Tail),
+                '--geometry=550x450-50+50',
+                '--image',
+                '{}'.format(self.pigtail32),
+                '--image-on-top',
+                '--window-icon',
+                '{}'.format(self.pigtail32),
+                '--no-focus',
+                '--no-markup',
+                '--on-top',
+                '--button=gtk-quit:0',
+                '--tail',
+                '< {}'.format(self.fifoName))
+        self.yadSHPid = \
+            os_popen(yadCmd, shell=True, wait=False, ret_type='pid')
+        self.yadPid = \
+            os_getpid(p.fifoDir, kill=False)   # find pid by mkstemp name
+        logging.debug('yadSHPid={}'.format(self.yadSHPid))
+        logging.debug('yadPid={}'.format(self.yadPid))
+        # print('yadCmd={}'.format(yadCmd))
+        # print(os.environ['YAD_PID'])
+
+    # couldn't figure out how to background this thru pyYAD
+    def displayYadWin(self):
+        """Display yad --text-info dialog window."""
+
+        p.yadReturn = YAD().TextInfo(
+            title='{} {}'.format(self.cmdName, self.fifoName),
+            geometry='400x350-50+50',
+            # text='{} {}'.format(self.cmdName, self.args.file2Tail),
+            image=self.pigtail32,
+            image_on_top=True,
+            window_icon=self.pigtail32,
+            no_focus=True,
+            no_markup=True,
+            on_top=True,
+            button0='gtk-quit:0',
+            tail=True,
+            filename=self.fifoName)            # p.tailHandle
+
+    # build the tail command (send to a fifo) [BG]
+    def viewFile(self):
+        """build the view command (send stream to the fifo) [BG]."""
+
+        L = '--lines={} '.format(self.args.lines)
+        P = '--pid={} '.format(self.yadPid)    # this pid exits makes tail die
+        tailCmd = '{} {}{}{}{} {} > {} &'.format(
+            p.tailCmd,
+            ('', '--follow ')[self.args.follow],
+            ('', '--retry ')[self.args.retry],
+            ('', L)[self.args.lines != ''],
+            ('', P)[self.args.pid is True],    # default is use YADS pid
+            self.args.file2Tail,               # file to read from
+            self.fifoName)                     # send to fifo
+        os_popen(tailCmd, wait=True)
+
+
+# realize class
+p = Program()
+
+
+def main():
+    """Our program entry execution point."""
+    global p                # our program claatexitss
+
+    # build our command line flags arguments
+    parser = argparse.ArgumentParser(
+        prog=p.cmdName,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description='Tail a file to yad dialog window',
+        epilog='{} {} {}'.format(p.cmdName, p.version, p.lastEdit)
+    )
+    parser.add_argument(
+        '--logging',
+        '-ll',
+        required=False,
+        type=str,
+        default='INFO',
+        metavar='',
+        choices=[
+            '10', '20', '30', '40', '50',
+            'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL',
+            'debug', 'info', 'warning', 'error', 'critical'
+        ],
+        help='loglevel=DEBUG | INFO | WARNING | ERROR | CRITICAL'
+    )
+    parser.add_argument(
+        '--logfile',
+        '-lf',
+        action='store_true',
+        required=False,
+        help='log to {} instead of the screen'.format(p.logFile)
+    )
+    # I will validate that I have a filename to follow later
+    parser.add_argument(
+        '--follow',
+        '-f',
+        action='store_true',
+        default=False,
+        required=False,
+        help='(follow filename)'
+    )
+    # I will validate that I have a filename to follow later
+    parser.add_argument(
+        '--Follow',
+        '-F',
+        action='store_true',
+        default=False,
+        required=False,
+        help='Follow filename (Retry on Error)'
+    )
+    parser.add_argument(
+        '--lines',
+        '-n',
+        default='50',
+        action='store',
+        required=False,
+        help='(lines to tail from end of file)'
+    )
+    parser.add_argument(
+        '--retry',
+        '-r',
+        default=False,
+        action='store_true',
+        required=False,
+        help='log to {} instead of the screen'.format(p.logFile)
+    )
+    parser.add_argument(
+        '--pid',
+        '-p',
+        default=True,
+        action='store_false',
+        required=False,
+        help='Dont terminate after process ID, PID dies'
+    )
+    # must be last arg (file 2 tail)
+    parser.add_argument(
+        'file2Tail',
+        type=str,
+        default='',
+        action='store',
+        metavar='<[file-to-tail]|[-]=(stdin)]>',
+        help='must be last argument'
+    )
+    #
+    # split options and non options into args, largs
+    # args = parser.parse_args() just parses args - nonargs generate an error
+    # default action of tail is to tail the file and exit
+    # if -f or -F flags - no exit - wait for appended file i/o
+    #
+    p.args, p.largs = parser.parse_known_args()
+    check_logging_args_argparse(p.args, p.logFile)  # get loglvl, init logging
+    p.tailCmd = os_which('tail')
+    # establish my path
+    os.environ['PATH'] = p.PATH
+    # myPATH = os.environ['PATH']
+    # print(myPATH)
+
+    # follow, Follow = follow and retry
+    if p.args.Follow:
+        p.args.follow = p.args.Follow
+        p.args.retry = True
+
+    if p.args.file2Tail == "":
+        print("Error: no filename to follow")
+        exit(1)
+
+    # print(str(p.args))
+    logging.debug('log level={}'.format(p.args.logging))
+    logging.debug('file2tail={}'.format(p.args.file2Tail))
+    logging.debug('lines={}'.format(p.args.lines))
+    logging.debug('pid={}'.format(p.args.pid))
+    logging.debug('follow={}'.format(('False', 'True')[p.args.follow]))
+    logging.debug('Follow={}'.format(('False', 'True')[p.args.Follow]))
+    logging.debug('retry={}'.format(('False', 'True')[p.args.retry]))
+    logging.debug('log2file={}'.format(('False', 'True')[p.args.logfile]))
+    logging.debug('logFile name={}'.format(p.logFile))
+    logging.debug('tail command={}'.format(p.tailCmd))
+    logging.debug('pigtail32={}'.format(p.pigtail32))
+
+    p.createFifo()            # create fifo
+    # p.viewFile()            # file stream to fifo
+    # p.displayYadWin()       # pyYad display window
+    p.displayTextWin()        # display text window
+    p.viewFile()              # put file into window
+    p.removeFifo              # remove fifo (clean)
+
+if __name__ == "__main__":
+    try:
+        # https://docs.python.org/2/library/atexit.html
+        atexit.register(p.removeFifo)
+        main()
+    # except KeyboardInterrupt:
+        # pass
+    finally:
+        p.removeFifo
