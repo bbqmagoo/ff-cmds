@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# -*- mode: shell -*-
+# -*- coding: utf-8 -*-
+tf="/tmp/testfile.mp4"
+tfn="/tmp/testnew.mp4"
+frag="/tmp/fragment"
+#
+# script to feed input into ff-gpv for testing purposes
+#
+# cleanup
+/bin/rm -f "${tf}" "${tfn}" "${frag}"
+
+# create test file chunks
+dd if=/dev/zero of="${tf}" bs=1M count=25 > /dev/null 2>&1 # create dummy file
+dd if=/dev/zero of="${frag}" bs=50000 count=1 > /dev/null 2>&1 # copy fragment
+szIn=$(du --block-size=1000 "${tf}"|cut -f 1)
+cp "${frag}" "${tfn}"
+
+# test both modes of ff-gpv
+# sub-shell feeds into ff-gpv (pulsate)
+(
+  while (true);
+  do
+    szOut="$(du --block-size=1000 "${tfn}"|cut -f 1)"
+    if [[ $szOut -ge $szIn ]]; then     # if equal - break loop
+      break
+    fi
+    cat "${frag}" >> "${tfn}"           # add chunk to newfile
+    sleep .1
+    #echo -en .
+  done
+) | ff-gpv "${tf}" "${tfn}" "${szIn}"
+
+# partial reset
+cp "${frag}" "${tfn}"
+# sub-shell feeds into ff-gpv (progress)
+(
+  while (true);
+  do
+    szOut="$(du --block-size=1000 "${tfn}"|cut -f 1)"
+    if [[ $szOut -ge $szIn ]]; then     # if equal - break loop
+      break
+    fi
+    cat "${frag}" >> "${tfn}"           # add chunk to newfile
+    sleep .1
+    #echo -en .
+  done
+) | ff-gpv -S 24000 "${tf}" "${tfn}" "${szIn}"
+
+# cleanup
+/bin/rm -f "${tf}" "${tfn}" "${frag}"

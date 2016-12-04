@@ -1,0 +1,249 @@
+#!/usr/bin/env bash
+#
+# gpv - gui pipe view (bash -> using yad --progress)
+# this is called in a pipe to monitor that commands status
+#
+FALSE=0
+TRUE=1
+_TOSCRN_=$FALSE
+_TOSCRN_=$TRUE
+_TOFILE_=$TRUE
+_TOFILE_=$FALSE
+#_TOPOPUP_=$FALSE
+# logging output to screen and logfile
+# based on _TOSCRN_ and/or _TOFILE_
+# being TRUE or FALSE
+_STDERR_="/dev/fd/1"
+_STDOUT_="/dev/fd/2"
+#_XTAIL_=$FALSE
+cmdName=$(basename $0)
+logFile="/tmp/$cmdName.log"
+ICONPATH="/usr/share/icons"
+ICON="${ICONPATH}/FFmpeg_32x32.png"
+# VERSION='v0.1.2'
+# EDITED='2016-11-05'
+# lint Status: = ?
+#
+# logging output to screen and logfile
+# based on _TOSCRN_ and/or _TOFILE_
+# being TRUE or FALSE
+#
+function logging()
+{
+  set +o errexit
+  ((_TOSCRN_)) || ((_TOFILE_)) && _DS_=$(date +"%H:%M:%S")
+  ((_TOSCRN_)) || ((_TOFILE_)) && _INFO_="FN=${FUNCNAME[1]},LN=${BASH_LINENO[0]}"
+  ((_TOSCRN_)) && echo -e "[${_DS_}]-${_INFO_}}-$*" > "${_STDOUT_}"
+  ((_TOFILE_)) && echo -e "[${_DS_}]-${_INFO_}}-$*" >> "${logFile}"
+  set -o errexit
+}
+
+#
+# bash version of python/perl die()
+# Print an error message and exit with given status
+# call as: die status "message" ["message" ...]
+# https://www.dartmouth.edu/~rc/classes/ksh/print_pages.shtml
+# https://stackoverflow.com/questions/7868818/\
+#   in-bash-is-there-an-equivalent-of-die-error-msg
+#
+function die()
+{
+  local exitStatus=${1}; shift
+  echo -e "${BASH_SOURCE[1]} Died at ${BASH_LINENO[0]} in ${FUNCNAME[1]}()" > \
+    "${_STDERR_}"
+  for i in "$@";
+  do
+    echo -e "${i}" > "${_STDERR_}"
+  done
+  exit "${exitStatus}"
+}
+
+function Usage()
+{
+cat <<EOF
+
+  $cmdName: display command status in yad --progress dialog window
+
+  Usage: <command> | ${cmdName} [flags] <fname> <new-fname> <new-fsize>"
+  flags:
+    -S)ize <num> pulsate/progress switch flag size (def: ${progSzFlag})
+    -T)est (exec ${cmdName} in self-test mode)
+    -h)elp (show help info)
+
+EOF
+  exit 1
+}
+
+#####################################################################
+# If called with no arguments a new timer is returned.
+#   Number of seconds since unix time began.
+# If called with arguments the first is used as a timer
+# value and the elapsed time is returned in the form HH:MM:SS.
+#
+# http://www.linuxjournal.com/content/use-date-command-measure-elapsed-time
+#
+function timer()
+{
+  if [[ $# -eq 0 ]]; then
+    date '+%s'
+  else
+    local  stime=$1
+    etime=$(date '+%s')
+
+    if [[ -z "$stime" ]]; then stime=$etime; fi
+
+    dt=$((etime - stime))        # difference
+    ds=$((dt % 60))            # seconds
+    dm=$(((dt / 60) % 60))        # minutes
+    dh=$((dt / 3600))        # hours
+    # return xx:xx:xx to be debug logged
+    printf '%d:%02d:%02d' $dh $dm $ds
+  fi
+}
+
+# main()
+set -o errexit                                          # exit on error
+set -o nounset                                          # no empty vars
+set -o pipefail                                         # fail pipe-errs
+# if in a pipeline we can
+# discard whats comimg in
+cat - > /dev/null &
+#
+# create logfile, truncate if it exists
+#
+: > "${logFile}"
+
+progSzFlag=100000
+inSz2Last=""            # keep record of each prev last filesize
+inSz2LastCnt=0          # if size doesnt change - keep count upto 5
+testFlag=$FALSE
+
+sleep .5                # give time for process
+
+while getopts "S:Th" opt
+do
+  case $opt in
+    S)
+      progSzFlag="${OPTARG}";
+      logging "progSzFlag=${progSzFlag}";
+    ;;
+    T)
+      testFlag="${TRUE}";
+      logging "execing ${cmdName} in self-test mode";
+      exec ${cmdName}-test;
+    ;;
+    \?|h)
+      Usage;
+    ;;
+  esac
+done
+shift $((OPTIND - 1))
+
+if [[ $# -ne "3" ]]; then
+  Usage
+else
+  fileIn=$1                            # filename passed as arg
+  fileIn2=$2                        # new filename gets created
+  inSize=$3                            # fileIn expected size (Radix 1000)
+fi
+
+fileBase=${fileIn%.*}                                # no extent
+yW=$(echo "${#fileBase} * 3 + 300"|bc)                # adjust window width
+logging "fileIn=$fileIn"
+logging "fileIn2=$fileIn2"
+logging "inSize=$inSize"
+#
+yTitle="$fileBase"
+yText="ff-copy2:"
+
+if [[ "$inSize" -gt "${progSzFlag}" ]]; then
+  progMode="percentage=1"
+else
+  progMode="pulsate"
+fi
+logging "progMode=${progMode}"
+
+startT=$(timer)
+logging "start=${startT}"
+
+#
+#     table
+# function    in        out        proc            type
+#====================================================
+# copycc    avi        mkv        copy            gui
+# copycc    mkv        mp4        copy            gui
+# copycc    mp4        mkv        copy            gui
+# copycc    flv        mp4        copy            gui
+# copytc    avi        +tfix    copy            gui
+# copyvo    avi        +vol    copy            gui
+# copyas    avi        +tfix    smaller    audio    gui
+# copyvs    avi        +tfix    smaller    video    gui
+# copycs    avi        +smpl    much smaller    not gui
+#
+
+#
+# pulsate || percent until new filesize >= old file size
+#
+(
+while true;
+do
+elapsedT=$(timer startT)
+# switch to du --block=1000
+
+# bash return code after running a pipe - PIPESTATUS[@]
+#   https://stackoverflow.com/questions/27186291/bash-return-code-after-reading-for-pipe
+# radix 1000 KB
+inSize2=$(du --block-size=1000 "$fileIn2"|cut -f 1)  # current new file size
+duStat=${PIPESTATUS[0]}     # retcode of cut, ${PIPESTATUS[1] = cut retcode
+percDone=$(echo "$inSize2 * 100 / $inSize"|bc)         # percentage done
+if [[ $duStat != 0 ]]; then
+  logging "ErrorStatus of du: $duStat"  # still deciding what to do here?
+  # echo '100'
+  # break
+fi
+if [[ $inSz2Last -ge $inSize ]]; then
+  ((inSz2LastCnt=inSz2LastCnt+=1))
+  logging "cnt=$inSz2LastCnt"
+fi
+inSz2Last=$inSize2
+# logging "inSz2Last=$inSz2Last"
+
+sleep .2
+# logging "size2=$inSize2, size=$inSize, perc=$percDone"
+if [[ "$progMode" != "pulsate" ]]; then
+  echo "$percDone"                    # percentage - update
+  echo "#$percDone% $inSize2 of $inSize KB, Elapsed=$elapsedT"
+  # logging "$percDone% $inSize2 of $inSize KB, Elapsed=$elapsedT"
+else
+  echo "#Active: Elapsed=$elapsedT"            # pulsate - update elapsed
+fi
+#
+# percentage mode - size compare (break from loop)
+#
+if [[ "$inSize2" -ge "$inSize" && $inSz2LastCnt -ge 1 ]]; then
+  logging "in2=$inSize2, in=$inSize, cnt=$inSz2LastCnt"
+  break
+fi
+done                            # my yad window
+) | yad\
+    --progress \
+    --${progMode} \
+    --title=$yTitle \
+    --text=$yText \
+    --geometry=${yW}x70+25-25 \
+    --image=$ICON \
+    --window-icon=$ICON \
+    --no-cancel \
+    --auto-close \
+    --no-buttons \
+    --on-top
+
+#
+# if logging and log remove log
+#
+if ((_TOFILE_)); then
+  if [[ -e "${logFile}" ]]; then
+    true
+    #/bin/rm -f "${logFile}"
+  fi
+fi
