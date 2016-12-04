@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """ff-size - display video file parameters of mult files."""
-# -*- coding: utf-8 -*-
 # -*- mode: python -*-
+# -*- coding: utf-8 -*-
 #
 # 2015-04-15 - added Attributes class to hold and control media data
 # 2016-01-10 - program linted by atom/flake8
@@ -61,15 +61,18 @@ class Program:
     def __init__(self):
         """Init members of class."""
         self.cmdName = os.path.basename(argv[0])     # save my cmdname
-        self.logFile = '/tmp/'+self.cmdName+'.log'   # my logging filename
+        self.logFile = '/tmp/{}.log'.format(self.cmdName)  # my log fname
         self.defLogLevel = 20                        # default log lvl (10)
         self.version = "v0.4.0"
-        self.lastEdit = "2016-04-21"
+        self.lastEdit = "2016-10-29"
         self.lintStatus = True
-        self.PATH = "/home/magoo/.bin:"\
-            + "/home/magoo/.bin/ff:"\
-            + "/usr/local/bin:"\
-            + "/usr/local/bin:/usr/bin:/bin"
+        self.mediaInfo = ""
+        self.vPlayer = "snappy"         # default video player
+        self.PATH = ':'.join([
+            "/home/magoo/.bin",
+            "/usr/local/bin",
+            "/usr/bin",
+            "/bin"])
         self.args = ""                  # command args
         self.largs = ""                 # command args
         self.titleFlag = False          # not title mode by default
@@ -80,18 +83,16 @@ class Program:
         }
 
 
-#
 # corral and control video file attributes
-#
 class Attributes:
     """Holds video file attributes as object values."""
 
     def __init__(self):
         """actual files dictionary of video parameters (stored by index)."""
         self.vData = {
-            VFN: '', OBR: '', NBR: '', VFC: '', VDR: '', VSZ: '', VCD: '',
-            VBR: '', VFR: '', VAR: '', ACD: '', VAF: '', VSR: '', VAC: '',
-            ASZ: '', VFS: '', VFT: '', VAN: '',
+            VFN: '', OBR: '', NBR: '', VFC: '', VDR: '', VSZ: '',
+            VCD: '', VBR: '', VFR: '', VAR: '', ACD: '', VAF: '',
+            VSR: '', VAC: '', ASZ: '', VFS: '', VFT: '', VAN: '',
         }
         # dictionary descriptions for data (these don't change)
         self.vDesc = {
@@ -116,7 +117,7 @@ class Attributes:
     def dump(self):
         """Dump class data for analysis"""
         for i in range(0, len(self.vData)):
-            print((self.vdesc[i] + ' = ' + self.vData[i]))
+            print('{} = {}'.format(self.vdesc[i], self.vData[i]))
 
     def osd(self):
         """Build and return data line for the gui-displaypath."""
@@ -124,12 +125,12 @@ class Attributes:
         data = (
             self.vData[VSZ],
             self.vData[VDR],
-            '%s Kb' % (self.vData[VBR]),
-            '%s Kb' % (self.vData[VAF]),
-            '%s M' % (self.vData[VFS]),
+            '{} Kb'.format(self.vData[VBR]),
+            '{} Kb'.format(self.vData[VAF]),
+            '{} M'.format(self.vData[VFS]),
             self.vData[VFR],
             self.vData[VAR],
-            str.replace(self.vData[VFN], '&', 'and'))
+            str.replace(self.vData[VFN], '&', 'and'))   # replace &
         return data
 
     def osdt(self):
@@ -141,27 +142,33 @@ class Attributes:
         if m is not 'None':
             g = m.groups()
             epiShow = str(g[0])
-            logging.debug('epiShow=' + epiShow)
+            logging.debug('epiShow={}'.format(epiShow))
         else:
             epiShow = 'SxxExx'          # failed to find Episode info
         if self.vData[VFT] == "":
-            self.vData[VFT] = 'None Found'
-        data = (epiShow, self.vData[VFT], self.vData[VFN])      # VFN hidden
+            self.vData[VFT] = 'No Metadata Title Found'
+        data = (epiShow, self.vData[VFT], self.vData[VFN])    # VFN hidden
         return(data)
 
     def print_line(self):
         """Console printed info-line output."""
+        # some field widths are smaller to accomodate 'kbs', 'k', 'M'
         data = ('{:<8}|{:<8}|{:<4} kbs|{:<4}k|{:<4}M|{:<5}|{:<5}|{}'.format(
-            self.vData[VSZ], self.vData[VDR], self.vData[VBR],
-            self.vData[VAF], self.vData[VFS], self.vData[VFR],
-            self.vData[VAR], self.vData[VFN][0:25]))
+            self.vData[VSZ],
+            self.vData[VDR],
+            self.vData[VBR],
+            self.vData[VAF],
+            self.vData[VFS],
+            self.vData[VFR],
+            self.vData[VAR],
+            self.vData[VFN][0:25]))
         print(data)
 
     def normalize(self):
         """Normalize the data for human consumption."""
         if self.normalized:
             return
-        logging.debug('NominalBitrate=' + self.vData[NBR])
+        logging.debug('NominalBitrate={}'.format(self.vData[NBR]))
         if len(self.vData[VBR]) < 1:
             if len(self.vData[NBR]) > 3:   # if nominal bitrate - use that
                 self.vData[VAF] = int(self.vData[OBR])-int(self.vData[NBR])
@@ -175,8 +182,9 @@ class Attributes:
                 self.vData[VBR] = int(self.vData[OBR])-128000
                 self.vData[VBR] = str(self.vData[VBR])
                 self.vData[VAF] = str(128000)
-                logging.debug(
-                    'FIX-BITRATE='+self.vData[VBR]+' AFREQ='+self.vData[VAF])
+                logging.debug('FIX-BITRATE={}, AFREQ={}'.format(
+                    self.vData[VBR],
+                    self.vData[VAF]))
         #
         # Some files had no audio BitRate value
         # but had BitRate_Nominal instead
@@ -191,9 +199,9 @@ class Attributes:
         #  48000 / 24000 - trim field after the ' /'
         #
         if len(self.vData[VSR]) > 7 and '/' in self.vData[VSR]:
-            self.vData[VSR] =\
+            self.vData[VSR] = \
                 self.vData[VSR][0:str.index(self.vData[VSR], ' /')]
-            logging.debug('srate fixed: '+self.vData[VSR])
+            logging.debug('srate fixed: {}'.format(self.vData[VSR]))
         #
         # I actually saw a rare occurence of no file duration set anywhere
         # we can use what we know - at 315k video bitrate use 2.885 factor
@@ -204,10 +212,10 @@ class Attributes:
         if len(self.vData[VDR]) < 1:
             # figure out factor from BR and 315k
             newFactor = float(int(self.vData[VBR]) * 2.885 / 315000)
-            # logging.info('VFS='+self.vData[VFS])
+            # logging.info('VFS={}'.format(self.vData[VFS]))
             # calc Duration
             newDUR = float(int(self.vData[VFS])/M) / float(newFactor) * 60
-            # logging.info('newVDR='+str(newDUR))
+            # logging.info('newVDR={}'.format(str(newDUR)))
             #
             # convert the new duration to hh:mm:ss for human readability
             #
@@ -215,13 +223,13 @@ class Attributes:
             hh = round((newDUR // 3600))
             mm = round(((newDUR - (hh * 3600)) // 60))
             ss = round(newDUR - (hh * 3600 + mm * 60))
-            if hh > 0:                  # format duration and store in array
+            if hh > 0:              # format duration and store in array
                 # splat denotes calulated data
                 newDURstr = '{}h {}mn {}s*'.format(hh, mm, ss)
             else:
                 newDURstr = '{}mn {}s*'.format(mm, ss)
             self.vData[VDR] = newDURstr
-            # logging.info(str(hh)+':'+str(mm)+':'+str(ss))
+            # logging.info('{}:{}:{}'.format(str(hh), str(mm), str(ss)))
         if not self.vData[VFR]:             # if no frame rate - set default
             self.vData[VFR] = '23.976*'     # most likely 23.976
         #
@@ -230,7 +238,7 @@ class Attributes:
         #
         self.vData[VBR] = str(int(self.vData[VBR])/1000)
         self.vData[VBR] = int(float(self.vData[VBR]))
-        logging.debug(str(self.vData[VAF]))
+        logging.debug('{}'.format(str(self.vData[VAF])))
         self.vData[VAF] = str(int(self.vData[VAF])/1000)
         self.vData[VAF] = int(float(self.vData[VAF]))
         self.vData[VFS] = str(int(self.vData[VFS])/1000000)  # format as MB
@@ -257,8 +265,8 @@ def main():
     parser = argparse.ArgumentParser(
         prog=p.cmdName,
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        description='Print details of video file(s)',
-        epilog=p.cmdName + ' ' + p.version + ' ' + p.lastEdit
+        description='Print parameters of video file(s)',
+        epilog='{} {} {}'.format(p.cmdName, p.version, p.lastEdit)
     )
     parser.add_argument(
         '--metatitle',
@@ -271,7 +279,7 @@ def main():
         '--osdFlag',
         '-of', action='store_true',
         required=False,
-        help='osdFlag=Display file(s) in a yad window'
+        help='osdFlag = Display file(s) in a yad window'
     )
     parser.add_argument(
         '--logging',
@@ -279,15 +287,21 @@ def main():
         required=False,
         type=str,
         default='20',
-        help='loglevel=DEBUG|INFO|WARNING|ERROR|CRITICAL',
-        metavar=''
+        metavar='',
+        choices=[
+            '10', '20', '30', '40', '50',
+            'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL',
+            'debug', 'info', 'warning', 'error', 'critical'
+        ],
+        help='loglevel = DEBUG | INFO | WARNING | ERROR | CRITICAL',
+
     )
     parser.add_argument(
         '--logfile',
         '-lf',
         action='store_true',
         required=False,
-        help='log to '+p.logFile+' instead of the screen'
+        help='log to {} instead of the screen'.format(p.logFile)
     )
     #
     # split options and non options into args, largs
@@ -298,8 +312,9 @@ def main():
     # get loglevel and start logging
     check_logging_args_argparse(p.args, p.logFile)
 
-    logging.debug('log level=' + str(p.args.logging))
-    logging.debug('metatitle=' + ('False', 'True')[p.args.metatitle])
+    logging.debug('log level={}'.format(str(p.args.logging)))
+    logging.debug('metatitle={}'.format(
+        ('False', 'True')[p.args.metatitle]))
 
     # establish my path
     os.environ['PATH'] = p.PATH
@@ -333,12 +348,12 @@ def main():
         instead I will just cd into dirArg and glob there
         '''
         dirArg = p.largs[0]                 # save dir name arg
-        logging.debug('dirArg='+dirArg)
+        logging.debug('dirArg={}'.format(dirArg))
         p.largs = []                        # reset largs to ""
         dirArg = dirArg.rstrip('/')         # strip trailing slash if there
         os.chdir(dirArg)                    # glob was failing sq brackets
         p.largs = glob.glob('*')            # glob * in dir
-        logging.debug('# of p.largs='+str(len(p.largs)))
+        logging.debug('# of p.largs={}'.format(str(len(p.largs))))
         sort_nicely(p.largs)
     else:
         dirArg = os.getcwd()
@@ -350,33 +365,34 @@ def main():
         filesParentDir = dirArg[dirArg.rindex('/')+1:]
     else:
         filesParentDir = dirArg
-    logging.debug('files parent='+filesParentDir)
+    logging.debug('files parent={}'.format(filesParentDir))
     #
     # return qualified path/filename for
     # mediainfo
     #
-    myMediaInfo = os_which('mediainfo')
-    logging.debug('mediainfo=' + myMediaInfo)
+    p.mediaInfo = os_which('mediainfo')
+    logging.debug('mediainfo={}'.format(p.mediaInfo))
 
     # set osd output based on command name
     if 'ff-metatitle' in p.cmdName or p.args.metatitle:
         p.args.metatitle = True
         p.titleFlag = True
-        logging.debug('metatitle in command name')
-        logging.debug('metatitle=' + ('False', 'True')[p.args.metatitle])
+        logging.debug('{}'.format('metatitle in command name'))
+        logging.debug('metatitle={}'.format(
+            ('False', 'True')[p.args.metatitle]))
 
     # set osd output based on command name
     if 'ff-size.osd' in p.cmdName or p.args.osdFlag:
         p.args.osdFlag = True
-        logging.debug('osd in command name')
-        logging.debug('osd=' + ('False', 'True')[p.args.osdFlag])
+        logging.debug('{}'.format('osd in command name'))
+        logging.debug('osdFlag={}'.format(
+            ('False', 'True')[p.args.osdFlag]))
 
     #
     # print report headers (if console output)
     #
     if not p.args.osdFlag:
         print_header()          # maybe buffer data and print later
-
     #
     # loop over files on command line
     #
@@ -387,10 +403,10 @@ def main():
         #
         # if this is a file and also a video file (process it)
         #
-        logging.debug('file=' + file)
+        logging.debug('file={}'.format(file))
         if 'file://' in file:
             file = file[len('file://'):]
-            logging.debug('URI-trim=' + file)
+            logging.debug('URI-trim={}'.format(file))
         if os.path.isfile(file) and validate_video(file):
             #
             # collect the mediainfo DATA from each file
@@ -408,7 +424,7 @@ def main():
                 "%SamplingRate%~%Channels%~%Format%~%BitRate_Nominal%")
 
             sysCmd = '{} --Inform=\"{}\" \"{}\"'.format(
-                myMediaInfo,
+                p.mediaInfo,
                 myQuery,
                 file
             )
@@ -423,13 +439,14 @@ def main():
             if fieldCount > 13:
                 # get index list of seperator chars
                 pos_list = find_ch_offsets('~', tmpOut)
-                logging.debug(
-                    'list='+str(pos_list)+'len list='+str(len(pos_list)))
-                logging.debug('Data='+str(tmpOut))
-                tmpOut = tmpOut[0:pos_list[13]]     # keep the fields I needed
-            # logging.info('Fields='+tmpOut)
+                logging.debug('list={}, len list={}'.format(
+                    str(pos_list),
+                    str(len(pos_list))))
+                logging.debug('Data={}'.format(str(tmpOut)))
+                tmpOut = tmpOut[0:pos_list[13]]    # keep the fields I needed
+            # logging.info('Fields={}'.format(tmpOut))
             # TestOut = parse_values(tmpOut,'~')
-            # logging.info('Test='+TestOut)
+            # logging.info('Test={}'.format(TestOut))
             # split/assign values to meaningful named variables
             #
             v.reset()                           # reset class data
@@ -441,7 +458,7 @@ def main():
             else:
                 fpath = os.getcwd()
 
-            logging.info("fpath={}".format(fpath))
+            # logging.info("fpath={}".format(fpath))
             if fieldCount >= 13:                # test for valid field count
                 v.vData[VFN] = file
                 (v.vData[OBR], v.vData[VFS], v.vData[VDR], v.vData[VFT],
@@ -489,33 +506,51 @@ def main():
     # end of for loop
     #
     if p.args.osdFlag:
-        buttonClose = "Close Window!Gnome-colors-window-close!Close window:0"
-        logging.debug('len yad=' + str(len(v.yad)))
-        # yadTitle = ('%s %s: %d Files found, Space Used: %d MiB' %
-        yadTitle = '{} {}: {:d} Files found, Space Used: {:d} MiB'.format(
-            p.cmdName,
-            filesParentDir,
-            totalFiles, totalSize
+        buttonClose = '{}!{}!{}:{}'.format(
+            'Close Window',                     # button label
+            'gtk-quit',                         # button icon
+            'Close window',                     # tooltip
+            '0')                                # exit code
+        logging.debug('len yad={}'.format(str(len(v.yad))))
+
+        # set up strings for title, text, dclick
+        # title does not support markup
+        yadTitle = '{} {}'.format(
+            '{} [{}]: '.format(
+                p.cmdName, filesParentDir),
+            '{:d} Files found, Space Used: {:d} MiB'.format(
+                totalFiles, totalSize)
         )
+        # text does support markup
+        yadText = '{} [{}] {} <b>{}</b>'.format(
+            '<b>Double-Click</b> any',
+            ('<u>FileName</u>', '<u>Episode</u>')[p.args.metatitle],
+            'to play with',
+            p.vPlayer)
+        dclickAction = '{} {}:{}'.format(
+            'ff-dclick',
+            p.vPlayer,
+            fpath)
         if p.args.metatitle:
             YAD().List(colnames=(
-                ("Episode", "TEXT"),
-                ("Metatitle", "TEXT"),
-                ("FnHidden", "TEXT")),
-                sep="~",
+                ("Episode", "TEXT"),                # episode # SxxExx
+                ("Metatitle", "TEXT"),              # metatitle or None
+                ("FnHidden", "TEXT")),              # hidden col (filename)
+                sep="~",                            # seperator
                 print_col=3,                        # return only fname
                 hide_col=3,                         # full filename
                 tooltip_col=3,                      # text for tooltip
-                quoted=True,
-                title=yadTitle,
-                width=550,
-                height=450,
-                image='cabview',
+                quoted=True,                        # return quoted
+                title=yadTitle,                     # title
+                text=yadText,                       # text below title
+                width=550,                          # dialog width
+                height=450,                         # dialog height
+                image='cabview',                    # cabview image
                 image_on_top=True,                  # refers to win icon posn
                 window_icon=p.images.get('2', ""),  # cabview launcher icon
-                button=buttonClose,
-                dclick_action='ff-dclick snappy+fpath',  # dblclick with args
-                data=v.yad,
+                button=buttonClose,                 # close button
+                dclick_action=dclickAction,         # dbl-click action
+                data=v.yad,                         # data array
             )
         else:
             YAD().List(
@@ -531,15 +566,16 @@ def main():
                 print_col=8,                        # return only fname
                 tooltip_col=8,                      # text for tooltip
                 quoted=True,                        # quote output arguments
-                sep="~",
+                sep="~",                            # seperator
                 title=yadTitle,                     # window title
+                text=yadText,                       # text below title
                 geometry="800x600-50+50",           # upper right corner
                 image='cabview',                    # cabview window icon
                 image_on_top=True,                  # refers to win icon posn
                 window_icon=p.images.get('2', ""),  # cabview launcher icon
                 button=buttonClose,                 # button with tooltip/close
                 on_top=False,                       # place window above others
-                dclick_action='ff-dclick snappy:'+fpath,  # dblclick with args
+                dclick_action=dclickAction,         # dbl-click action
                 # text & print stuff (x=yad ...)
                 # hide_col=8,                       # works, hide that column
                 # ellipsize='middle',
@@ -548,7 +584,6 @@ def main():
                 data=v.yad,                # our buffer of lines of data
             )
     else:
-        # print('%s %s: %d Files found, Space Used: %d MiB' %
         print('{} {}: {:d} Files found, Space Used: {:d} MiB'.format(
             p.cmdName,
             filesParentDir,
@@ -590,7 +625,7 @@ def validate_video(fileIn):
         ".vob": True, ".ts": True, ".mpg": True,
     }
     (fileIn_base, fileIn_ext) = os.path.splitext(fileIn)
-    # def=False, good lookup=True
+    # default=False, good lookup=True
     return(Extents.get(fileIn_ext, False))
 
 
@@ -602,31 +637,22 @@ def sort_nicely(l):
 
 
 def print_header():
-    """print report headers."""
+    """print console report headers."""
     if 'v.ff-metatitle' in p.cmdName or p.titleFlag or p.args.metatitle:
-        print('{}'.format('Video File Metadata Titles'))
-        print('{}'.format("=" * 79))
+        print('{}|{}'.format('Video', 'File Metadata Titles'))
+        print('{}|{}'.format('=' * 6, '=' * 73))
     else:
-        '''
-        012346789012345678901234567890123456789012345678901234567890123456789012345
-                10        20        30        40        50        60        70
-        '''
-        myLine = ('{:<8}|{:<8}|{:<4}|{:<4}|{:<5}|{:<6}|{:<5}|{}'.format(
-            "Screen",
-            "Duration",
-            " BitRate",
-            "SRate",
-            "Size",
-            "Frame",
-            "Aspct",
-            "FileName")
+        print('{:<8}|{:<8}|{:<8}|{:<5}|{:<5}|{:<6}|{:<5}|{:<25}'.format(
+            'Screen', 'Duration', ' BitRate', 'SRate',
+            'Size', 'Frame', 'Aspct', 'FileName')
         )
-        print(myLine)
-
-        myLine = "========|========|========|=====|" \
-            + "=====|======|=====|========================="
-        print(myLine)
-
+        print('{:<8}|{:<8}|{:<8}|{:<5}|{:<5}|{:<6}|{:<5}|{:<25}'.format(
+            '=' * 8, '=' * 8, '=' * 8, '=' * 5,
+            '=' * 5, '=' * 6, '=' * 5, '=' * 25)
+        )
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        exit(1)

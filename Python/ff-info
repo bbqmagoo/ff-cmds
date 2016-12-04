@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-# -*- mode: python -*-
 """ff-info - text-tty or gui-yad show video file parameters."""
+# -*- mode: python -*-
+# -*- coding: utf-8 -*-
 #
 # 2015-04-15 - added Attributes class to hold and control media data
 # 2015-08-31 - added title/episode# field 'TTL' to General part of query
 # 2016-01-09 - program linted by atom/flake8
 # 2016-04-21 - updates for magoo_tools
+# 2016-10-29 - changed print & logging statements to ''.format()
+# 2016-10-29 - changed YAD button definitions to use ''.format()
 #
-
 from sys import argv, exit   # , version_info
 import os.path
 import argparse
 from magoo.logtools import check_logging_args_argparse, logging
-from magoo.proctools import os_which, os_getstatusoutput
+from magoo.proctools import os_which, os_getstatusoutput, os_call
 from yad import YAD
 '''
 from sys import version_info
@@ -60,19 +61,21 @@ class Program:
     def __init__(self):
         """Store important program info here."""
         self.cmdName = os.path.basename(argv[0])        # save my cmdname
-        self.logFile = '/tmp/' + self.cmdName + '.log'  # my logging filename
+        self.logFile = '/tmp/{}.log'.format(self.cmdName)  # my log fname
         self.defLogLevel = 20                       # default log level (INFO)
         self.version = "v0.4.0"
-        self.lastEdit = "2016-04-21"
+        self.lastEdit = "2016-10-29"
         self.lintStatus = True
-        self.PATH = "/home/magoo/.bin:"\
-            + "/home/magoo/.bin/ff:"\
-            + "/usr/local/bin:"\
-            + "/usr/local/bin:/usr/bin:/bin"
+        self.PATH = ':'.join([
+            "/home/magoo/.bin",
+            "/usr/local/bin",
+            "/usr/bin",
+            "/bin"])
         self.args = ""                  # command args
         self.largs = ""                 # command args
         self.titleFlag = False
         self.vPlayer = "snappy"         # default player
+        self.mediaInfo = ""             # path to mediainfo
         self.images = {                 # usefull icons names
             '0': 'FFmpeg',
             '1': 'pyrenamer',
@@ -109,6 +112,7 @@ class Attributes:
             "1": "1-Mono", "2": "2-Stereo", "6": "6-Surround", "": "N/A"
         }
         self.yad = []       # buffer for yad output
+        self.pb = []        # print output buffer
 
         # ? list range instead
     def reset(self):
@@ -122,7 +126,7 @@ class Attributes:
             print((self.vdesc[i] + ' = ' + self.vData[i]))
 
     def build_yad(self):
-        """Build yad data buffer line and append to buffer."""
+        """Build yad data buffer line and append to data buffer."""
         # normalize/beautify data
         self.normalize()
         self.yad = []    # reset yad
@@ -131,44 +135,69 @@ class Attributes:
             VFR, VAR, ACD, VAF, VSR, VAC, ASZ
         ):
             if i == VBR or i == VAF or i == VSR:
-                data = (self.vDesc[i], '%s Kb' % self.vData[i])  # formatted
+                # formatted
+                data = (self.vDesc[i], '{} Kb'.format(self.vData[i]))
             else:
                 data = (self.vDesc[i], self.vData[i])
             self.yad.append(data)
         return(self.yad)
 
-    # console printed output
+    def oldScreenDisplay(self):
+        """Old onscreen display - used notify-send command"""
+        sysCmd = '{} -t 12000 \"{}\" \"{}{}{}{}\"'.format(
+            os_which('notify-send'),
+            v.pb[0],
+            v.pb[1],
+            v.pb[2],
+            v.pb[3],
+            v.pb[4])
+        logging.debug('{}'.format(sysCmd))
+        os_call(sysCmd, shell=True)
+
     def build_print(self):          # fix this too
         """Build and print data to the console."""
         self.normalize()  # normalize/beautify data
-        fn = ('Py3: {}\n'.format(self.vData[VFN]))
-        cn = ('{:<15}{}\n{:<15}{}\n{:<15}{}\n'.format(
-            '%s: ' % self.vDesc[TTL], self.vData[TTL],
-            '%s: ' % self.vDesc[VFC], self.vData[VFC],
-            '%s: ' % self.vDesc[VDR], self.vData[VDR]))
-        l1 = \
+        ln = ('Py3: {}\n'.format(self.vData[VFN]))
+        v.pb.append(ln)
+        ln = ('{:<15}{}\n{:<15}{}\n{:<15}{}\n'.format(
+            '{}: '.format(self.vDesc[TTL]), self.vData[TTL],
+            '{}: '.format(self.vDesc[VFC]), self.vData[VFC],
+            '{}: '.format(self.vDesc[VDR]), self.vData[VDR]))
+        v.pb.append(ln)
+        ln = \
             ('{:<15}{}\n{:<15}{}\n{:<15}{} kb/s\n{:<15}{}\n{:<15}{}\n'.format(
-                '%s:' % self.vDesc[VSZ], self.vData[VSZ],
-                '%s:' % self.vDesc[VCD], self.vData[VCD],
-                '%s:' % self.vDesc[VBR], self.vData[VBR],
-                '%s:' % self.vDesc[VFR], self.vData[VFR],
-                '%s:' % self.vDesc[VAR], self.vData[VAR]))
-        l2 = \
+                '{}:'.format(self.vDesc[VSZ]), self.vData[VSZ],
+                '{}:'.format(self.vDesc[VCD]), self.vData[VCD],
+                '{}:'.format(self.vDesc[VBR]), self.vData[VBR],
+                '{}:'.format(self.vDesc[VFR]), self.vData[VFR],
+                '{}:'.format(self.vDesc[VAR]), self.vData[VAR]))
+        v.pb.append(ln)
+        ln = \
             ('{:<15}{}\n{:<15}{} khz\n{:<15}{} kb/s\n'.format(
-                '%s: ' % self.vDesc[ACD], self.vData[ACD],
-                '%s: ' % self.vDesc[VAF], self.vData[VAF],
-                '%s: ' % self.vDesc[VSR], self.vData[VSR]))
-        l3 = \
+                '{}: '.format(self.vDesc[ACD]), self.vData[ACD],
+                '{}: '.format(self.vDesc[VAF]), self.vData[VAF],
+                '{}: '.format(self.vDesc[VSR]), self.vData[VSR]))
+        v.pb.append(ln)
+        ln = \
             ('{:<15}{}\n{:<15}{}\n'.format(
-                '%s: ' % self.vDesc[VAC], self.vData[VAC],
-                '%s: ' % self.vDesc[ASZ], self.vData[ASZ]))
-        print('{}\n{}\n{}\n{}\n{}'.format(fn, cn, l1, l2, l3))
+                '{}: '.format(self.vDesc[VAC]), self.vData[VAC],
+                '{}: '.format(self.vDesc[ASZ]), self.vData[ASZ]))
+        v.pb.append(ln)
+        if p.args.notifyFlag:
+            self.oldScreenDisplay()
+        else:
+            print('{}\n{}\n{}\n{}\n{}'.format(
+                v.pb[0],
+                v.pb[1],
+                v.pb[2],
+                v.pb[3],
+                v.pb[4]))
 
     def normalize(self):
         """Normalize data values - make em pretty."""
         if self.normalized:
             return
-        logging.debug('NominalBitrate='+self.vData[NBR])
+        logging.debug('NominalBitrate={}'.format(self.vData[NBR]))
         if len(self.vData[VBR]) < 1 or len(self.vData[VAF]) < 1:
             if len(self.vData[NBR]) > 3:  # if nominal bitrate - use that
                 self.vData[VAF] = int(self.vData[OBR])-int(self.vData[NBR])
@@ -185,8 +214,8 @@ class Attributes:
                 self.vData[VBR] = int(self.vData[OBR])-128000
                 self.vData[VBR] = str(self.vData[VBR])
                 self.vData[VAF] = str(128000)
-                logging.debug('FIX-BITRATE=\
-                    '+self.vData[VBR] + ' AFREQ=' + self.vData[VAF])
+                logging.debug('FIX-BITRATE={}, AFREQ={}'.format(
+                    self.vData[VBR], self.vData[VAF]))
         #
         # wierd deal where SRATE and Chanls had extra fields
         #  48000 / 24000 - trim fields after the ' /'
@@ -194,14 +223,14 @@ class Attributes:
         if len(self.vData[VSR]) > 7 and '/' in self.vData[VSR]:
             self.vData[VSR] = \
                 self.vData[VSR][0:str.index(self.vData[VSR], ' /')]
-            logging.debug('srate fixed: '+self.vData[VSR])
+            logging.debug('srate fixed: {}'.format(self.vData[VSR]))
         #
         # lookup the Channels Data from dict table
         #
         if len(self.vData[VAC]) > 7 and '/' in self.vData[VAC]:
             self.vData[VAC] = \
                 self.vData[VAC][0:str.index(self.vData[VAC], ' /')]
-            logging.debug('audio chanls fixed: ' + self.vData[VAC])
+            logging.debug('audio chanls fixed: {}'.format(self.vData[VAC]))
         self.vData[VAC] = self.channels[self.vData[VAC]]
         #
         # I actually saw a rare occurence of no file duration set anywhere
@@ -213,10 +242,10 @@ class Attributes:
         if len(self.vData[VDR]) < 1:
             # figure out factor from BR and 315k
             newFactor = float(int(self.vData[VBR]) * 2.885 / 315000)
-            logging.info('VFS='+self.vData[VFS])
+            logging.info('VFS={}'.format(self.vData[VFS]))
             # calc Duration
             newDUR = float(int(self.vData[VFS]) / M) / float(newFactor) * 60
-            # logging.info('newVDR='+str(newDUR))
+            # logging.info('newVDR={}'.format(str(newDUR)))
             #
             # convert the new duration to hh:mm:ss for human readability
             #
@@ -230,7 +259,7 @@ class Attributes:
             else:
                 newDURstr = '{}mn {}s*'.format(mm, ss)
             self.vData[VDR] = newDURstr
-            # logging.info(str(hh)+':'+str(mm)+':'+str(ss))
+            # logging.info('{}:{}:{}'.format(str(hh), str(mm), str(ss)))
         if not self.vData[VFR]:             # if no frame rate - set default
             self.vData[VFR] = '23.976*'     # most likely 23.976
         #
@@ -244,8 +273,8 @@ class Attributes:
             # figure out duration in seconds from size/M/factor*60
             # calc Duration
             newDUR = float(int(self.vData[VFS]) / M) / float(newFactor) * 60
-            # logging.info('vaf='+str(self.vData[VAF]))
-            # logging.info('dur='+str(newDUR))
+            # logging.info('vaf={}'.format(str(self.vData[VAF])))
+            # logging.info('dur={}'.format(str(newDUR)))
             self.vData[ASZ] = \
                 round(calc_audio_size(int(self.vData[VAF]), newDUR))
             self.vData[ASZ] = str(round(self.vData[ASZ] / 1000))+' MiB*'
@@ -267,9 +296,6 @@ v = Attributes()                # my video attributes storage class
 p = Program()
 
 
-#
-# Main Function
-#
 def main():
     """our main function - program executes here."""
     global p
@@ -283,8 +309,8 @@ def main():
     parser = argparse.ArgumentParser(
         prog=p.cmdName,
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        description='Print details of video file(s)',
-        epilog=p.cmdName + ' ' + p.version + ' ' + p.lastEdit
+        description='Print video parameters of video file(s)',
+        epilog='{} {} {}'.format(p.cmdName, p.version, p.lastEdit)
     )
     parser.add_argument(
         '--logging',
@@ -293,13 +319,18 @@ def main():
         type=str,
         default='20',
         metavar='',
-        help='loglevel=DEBUG|INFO|WARNING|ERROR|CRITICAL'
+        choices=[
+            '10', '20', '30', '40', '50',
+            'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL',
+            'debug', 'info', 'warning', 'error', 'critical'
+        ],
+        help='loglevel = DEBUG | INFO | WARNING | ERROR | CRITICAL'
     )
     parser.add_argument(
         '--logfile', '-lf',
         action='store_true',
         required=False,
-        help='log to '+p.logFile+' instead of the screen'
+        help='log to {} instead of the screen'.format(p.logFile)
     )
     parser.add_argument(
         '--osdFlag',
@@ -308,6 +339,13 @@ def main():
         required=False,
         help='osdFlag=OnScreenDisplay with yad'
     )
+    parser.add_argument(
+        '--notifyFlag',
+        '-nf',
+        action='store_true',
+        required=False,
+        help='notifyFlag=OnScreenDisplay with notify-send'
+    )
     #
     # split options and non options into args, largs
     # args = parser.parse_args() just parses args - non-args generate an error
@@ -315,9 +353,9 @@ def main():
     p.args, p.largs = parser.parse_known_args()
     check_logging_args_argparse(p.args, p.logFile)  # get loglvl, init logging
 
-    logging.debug('log level=' + str(p.args.logging))
-    logging.debug('osdFlag=' + ('False', 'True')[p.args.osdFlag])
-    logging.debug('logfile=' + ('False', 'True')[p.args.logfile])
+    logging.debug('log level={}'.format(str(p.args.logging)))
+    logging.debug('osdFlag={}'.format(('False', 'True')[p.args.osdFlag]))
+    logging.debug('logfile={}'.format(('False', 'True')[p.args.logfile]))
 
     # establish my path
     os.environ['PATH'] = p.PATH
@@ -332,18 +370,16 @@ def main():
         parser.print_help()
         exit(2)
 
-    #
-    # return qualified path/filename for
-    # mediainfo & notify-send
-    #
-    myMediaInfo = os_which('mediainfo')
-    # myNotify = os_which('notify-send')
+    # return qualified path/filename for mediainfo
+    p.mediaInfo = os_which('mediainfo')
 
     if 'osd' in p.cmdName:      # set osd output based on command name
         p.args.osdFlag = True
-        logging.debug('osdFlag in command name')
-        logging.debug('osdFlag=' + ('False', 'True')[p.args.osdFlag])
-
+        logging.debug('{}'.format('osdFlag in command name'))
+        logging.debug('osdFlag={}'.format(
+            ('False', 'True')[p.args.osdFlag]))
+        logging.debug('notifyFlag={}'.format(
+            ('False', 'True')[p.args.notifyFlag]))
     #
     # process each file
     #
@@ -351,12 +387,12 @@ def main():
         # if file and also a video (mp4, mkv, avi ...)
         if 'file://' in file:
             file = file[len('file://'):]
-            logging.debug('URI-trim='+file)
+            logging.debug('URI-trim={}'.format(file))
         #
         # if file coming from YAD(DND) as URI - Strip the URI part
         #
         if os.path.isfile(file) and validate_video(file):
-            logging.debug('file=' + file)
+            logging.debug('file={}'.format(file))
             # basefile = os.path.basename(file)  # save bname for printing
             #
             # collect the mediainfo DATA from each file (General,Video,Audio)
@@ -396,12 +432,12 @@ def main():
             # output returned to tmpOut
             #
             sysCmd = '{} --Inform=\"{}\" \"{}\"'.format(
-                myMediaInfo,
+                p.mediaInfo,
                 myQuery,
                 file
             )
             tmpOut = os_getstatusoutput(sysCmd, status=False).rstrip()
-            logging.debug('Fields='+tmpOut)
+            logging.debug('Fields={}'.format(tmpOut))
             #
             # some files had two audio streams and
             # returned to many fields - trim tmpOut
@@ -414,12 +450,12 @@ def main():
             # the offending field may need to be moved to the end of the query
             #
             audioStrCnt = getField(tmpOut, 1)  # get audioStreamCnt from list
-            logging.debug('audioStrCnt=' + str(audioStrCnt))
-            logging.debug('#fields='+str(tmpOut.count('~')))
+            logging.debug('audioStrCnt={}'.format(str(audioStrCnt)))
+            logging.debug('#fields={}'.format(str(tmpOut.count('~'))))
 
             if int(audioStrCnt) > 1:                # extra audio data in list
                 tmpOut = getField(tmpOut, 0, 17)            # get trimmed list
-                logging.debug('#fields='+str(tmpOut.count('~')))
+                logging.debug('#fields={}'.format(str(tmpOut.count('~'))))
             else:
                 # tmpOut = tmpOut.rstrip('~')  # trim extra '~' from list
                 #
@@ -429,17 +465,7 @@ def main():
                 # maybe check first to verify that is '~'
                 #
                 tmpOut = tmpOut[:-1]           # trim 1 '~' from end of list
-                '''
-                # if tmpOut.count('~') > 16:
-                # and int(audioStrCnt) > 1:
-                # pos_list = find_ch_offsets('~',
-                # tmpOut# index list of seperator chars
-                # logging.debug('list='+str(pos_list)+
-                # 'len list='+str(len(pos_list)))
-                # tmpOut = tmpOut[0:pos_list[16]]
-                # keep the wanted fields
-                '''
-            logging.debug('Fields='+tmpOut)
+            logging.debug('Fields={}'.format(tmpOut))
 
             if '/' in file:                     # directory name prepended
                 fpath = file                    # save all
@@ -454,8 +480,7 @@ def main():
             v.reset()                           # refresh the class data
             v.vData[VFN] = file
             # now getting filesize from mediainfo
-            # get size of file
-            # v.vData[VFS] = str(os.stat(v.vData[VFN]).st_size)
+            # was get size of file '{:d}'.format(v.vData[VFR]),
             (
                 v.vData[VFS], v.vData[ASC], v.vData[TTL],
                 v.vData[VFC], v.vData[OBR], v.vData[VDR],
@@ -471,7 +496,7 @@ def main():
                 v.vData[TTL] = stringClean(v.vData[TTL])  # sanitize title
 
             # if more than 1 file - reset normalized flag
-            logging.debug('#largs='+str(len(p.largs)))
+            logging.debug('#largs={}'.format(str(len(p.largs))))
             if len(p.largs) > 1:
                 v.normalized = False        # set normalize/beautify flag
 
@@ -485,16 +510,20 @@ def main():
                 # on screen with pyYad (was notify-send)
                 #
                 yad = v.build_yad()
-                yadTitle = ('%s' % (p.cmdName))
-                buttonClose = \
-                    "Close Window!Gnome-colors-window-close!Close window:0"
-                buttonPlay = \
-                    "Play Video!{}!Play with {}:nohup {} {}".format(
-                        p.vPlayer,
-                        p.vPlayer,
-                        os_which(p.vPlayer),
-                        '\"{}/{}\"'.format(fpath, file)
-                    )
+                yadTitle = '{}'.format(p.cmdName)
+                buttonClose = '{}!{}!{}:{}'.format(
+                    'Close Window',                 # button label
+                    'gtk-quit',                     # button icon
+                    'Close window',                 # tooltip
+                    '0')                            # exit code
+                buttonPlay = '{}!{}!{}:{}'.format(
+                    'Play Video',                       # button label
+                    p.vPlayer,                          # button icon
+                    'Play with {}'.format(p.vPlayer),   # tooltip
+                    'nohup {} {}'.format(
+                        os_which(p.vPlayer),            # command
+                        '\"{}/{}\"'.format(
+                            fpath, file)))              # path/file
 
                 YAD().List(colnames=(
                     ("Field", "TEXT"),
@@ -515,32 +544,9 @@ def main():
                     # ellipsize='middle',       #  display Tex...t - expandable
                     # expander='ExpandMe',      # works here
                 )
-                '''
-                #
-                # Code History
-                #
-                # display data onscreen with notify-send
-                #
-                # sysCmd = '{} -t 12000 \"{}\" \"{}{}{}\"'.format(
-                #     myNotify,
-                #     fn,
-                #     cn,
-                #     l1,
-                #     l2
-                # )
-                # logging.debug(sysCmd)
-                # os_call(sysCmd, shell=True)
-                #
-                '''
-        #
         # end of is file and valid video file
-        #
-    #
     # end of the for each file loop
-    #
-#
-# endof __MAIN__,
-#
+# endof __MAIN__
 
 
 def calc_audio_size(audio_bitrate, time):
@@ -574,9 +580,10 @@ def getField(listIn, f, n=1):
 def validate_video(fileIn):
     """Validate a file against a dict of extents, good return(True)."""
     Extents = {
-        ".mp4": True, ".mkv": True, ".avi": True, ".ogg": True, ".m4v": True,
-        ".mov": True, ".flv": True, ".wmv": True, ".vob": True, ".ts": True,
-        ".mpg": True,
+        ".mp4": True, ".mkv": True, ".avi": True,
+        ".ogg": True, ".m4v": True, ".mov": True,
+        ".flv": True, ".wmv": True, ".vob": True,
+        ".mpg": True, ".ts": True,
     }
     (fileIn_base, fileIn_ext) = os.path.splitext(fileIn)
     return(Extents.get(fileIn_ext, False))      # def=False, good lookup=True
@@ -606,4 +613,7 @@ def stringClean(strIn):
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        exit(1)
