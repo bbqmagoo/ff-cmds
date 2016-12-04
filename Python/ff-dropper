@@ -1,27 +1,35 @@
 #!/usr/bin/env python3
+"""ff-dropper - onscreen yad-based drag&drop target for multiple cmds."""
+# -*- mode: python -*-
 # -*- coding: utf-8 -*-
 from sys import argv, exit
 import os.path
 import argparse
 from magoo.logtools import check_logging_args_argparse, logging
+from magoo.proctools import os_call
 # from magoo.proctools import os_notify
 from yad import YAD
 
-"""ff-dropper - onscreen yad-based drag n drop target for multiple cmds."""
 """
-put a yad drag n drop window on the screen - items dropped are processed by
-the current -cmd=<string>.  Default is ff-rename.  others can be specified
+put a yad drag&drop window on the screen - items dropped are processed by
+the current -cmd=<string>.  Default is ff-cleaner.  others can be specified
 on the commandline.
 
 atom linter-flake8 add to Atom stuff:
   http://www.marinamele.com/install-and-configure-atom-editor-for-python
 
-2016-01-09 - program linted by atom/flake8
+2016-01-09 - program linted by atom/flake8/pep8
 2016-02-08 - changed yad buttons to use ff-tail -n 50 -f (yad version)
 2016-03-01 - Changed ff-enc log button filename to remove '.sh' from name
 2016-03-01 - Added wget command to command table (download to ~/Desktop/wget)
 2016-04-08 - Added ff-fbrename to command table (filebot rename file)
 2016-04-21 - update code for magoo_tools
+2016-10-12 - fix long lines and use str.format commands (not %)
+2016-10-21 - add entry in lookup table for ff-view
+2016-10-22 - fix some more strings to use format, add choices to argparse
+2016-10-22 - added class function buildCmndsAll for argparse --command
+2016-10-29 - changed default drop command to ff-cleaner
+2016-11-07 - added pick command function --pickFlag, -pf on cmd-line
 """
 
 
@@ -31,44 +39,46 @@ class Program:
     def __init__(self):
         """Store important program info here."""
         self.cmdName = os.path.basename(argv[0])  # save cmd name (no path)
-        self.logFile = '/tmp/'+self.cmdName+'.log'  # my logging filename
-        self.defLogLevel = 20				# default log level (INFO)
-        self.version = "v0.1.9"
-        self.lastEdit = "2016-03-01"
+        self.logFile = '/tmp/{}.log'.format(self.cmdName)  # my log fname
+        self.defLogLevel = 20           # default log level (INFO)
+        self.version = "v0.2.1"
+        self.lastEdit = "2016-11-07"
         self.lintStatus = True
-        self.title = "ff-dropper"				# default title
-        self.icon = ""					# launcher icon
-        self.image = ""					# imager dropper window
-        self.text = ""					# tooltip text
-        self.button = "View-Log!cab_view!Tail-Log"		# my log view button
+        self.title = "ff-dropper"       # default title
+        self.icon = ""                  # launcher icon
+        self.image = ""                 # imager dropper window
+        self.text = ""                  # tooltip text
+        self.button = "View-Log!cab_view!Tail-Log"  # my log view button
         # set my path in env
-        self.PATH = "/home/magoo/.bin:"\
-            + "/home/magoo/.bin/ff:"\
-            + "/usr/local/bin:"\
-            + "/usr/local/bin:/usr/bin:/bin"
-        self.args = ""					# command args
-        self.largs = ""					# command args
+        self.PATH = ':'.join([
+            "/home/magoo/.bin",
+            "/usr/local/bin",
+            "/usr/bin",
+            "/bin"])
+        self.args = ""                  # command flags
+        # build cmnds string for next argparse
+        self.cmndsStr = ''
+        self.defCmdName = 'ff-cleaner'
+        self.defCmdStr = 'ff-cleaner -ll 10 -lf -ex'
         self.cmnds = {
-            'ff-info': 'ff-info -of',			# detailed file info
-            'ff-size': 'ff-size -of',			# less detailed, all files in dir
-            'ff-title': 'ff-size -mt -of',		# show ff-size metadata all files
-            'ff-grok': 'ff-grok',				# show ff-enc space savings
-            'ff-enc': 'ff-drop-sh -D enc',		# transcode video files
-            'ff-cropsize': 'ff-cropsize',		# rsz, crop and perf->folder.jpg
-            'ff-rename': 'ff-rename -L 10 -F -s -e',  # rename the video file
-            'ff-copy2': 'ff-drop-sh',	        # modify video files
-            'ff-wget': 'wget -O /home/magoo/Desktop/wget/raw.jpg',	 # wget jpg
+            'ff-copy2': 'ff-drop-sh -D',       # modify video files
+            'ff-cropsize': 'ff-cropsize',   # rsz, crop and perf->folder.jpg
+            'ff-cleaner': 'ff-cleaner -ll 10 -lf -ex',    # rename video file
+            'ff-enc': 'ff-drop-sh -D enc',  # transcode video files
             'ff-fbrename': 'ff-fbrename',       # filebot rename file
             'ff-fetch-omdb': 'ff-fetch-omdb',   # fetch json data from omdbapi
-            'ff-stdout': 'yad --list --column=DND',	 # show args onscreen
+            'ff-info': 'ff-info -of',       # detailed file info
+            'ff-rename': 'ff-rename -L 10 -F -s -e',  # rename video file
+            'ff-size': 'ff-size -of',       # less detailed, all files in dir
+            'ff-title': 'ff-size -mt -of',  # show ff-size metadata all files
+            'ff-view': 'ff-view',           # view files that are dopped
+            'ff-wget': 'wget -O /home/magoo/Desktop/wget/raw.jpg',  # wget jpg
         }
-        '''these entries replaced by ff-copy2s gui picking function:
-            'ff-copy2as': 'ff-drop-sh copy2as',  # audio shrink
-            'ff-copy2vs': 'ff-drop-sh copy2vs',  # video shrink
-            'ff-copy2cc': 'ff-drop-sh copy2cc',  # change copy
-            'ff-copy2vo': 'ff-drop-sh copy2vo',		# change volume
-            'ff-copy2tc': 'ff-drop-sh copy2tc',		# title copy
-        '''
+        # removed commands
+        # 'ff-grok': 'ff-grok',self.cmndsAll       # show ff-enc space savings
+        # 'ff-stdout': 'yad --list --column=DND',  # show args onscreen
+        self.cmndsAll = ''
+        self.pickOpts = []
         #
         # we just need the icon name if icon.svg
         # is located in /usr/share/icons/hicolor and
@@ -79,9 +89,56 @@ class Program:
             'ff-enc': 'FFmpeg',
             'ff-copy2': 'FFmpeg',
             'ff-rename': 'pyrenamer',
+            'ff-cleaner': 'pyrenamer',
             'ff-fbrename': 'pyrenamer',
             'ff-cropsize': 'gtk-zoom-fit',
+            'ff-view': 'cab_view'
         }
+
+    # build string of all commands in self.cmnds dict for help info
+    def buildCmndsAll(self):
+        for key, value in self.cmnds.items():
+            self.cmndsAll += (key, ', {}'.format(key))[self.cmndsAll != '']
+
+    def pick(self):
+        """display dropper choices in a yad list dialog."""
+        for key, value in self.cmnds.items():
+            if key == 'ff-cleaner':         # default is ff-cleaner
+                key = '^{}'.format(key)
+            self.pickOpts.append(key)
+        formFlds = (				        # my form CB field
+            ("CB", 'Commands', (self.pickOpts)),
+        )
+        # returns a dict
+        # {0: 'string', 'rc': 0}
+        # or None
+        x = YAD().Form(
+            fields=formFlds,
+            title=p.cmdName,
+            text='Select',
+            image='cab_view',
+            geometry='-25+25',
+            ontop=True,
+            button0='Okay!gtk-ok!Okay:0',
+            button1='Quit!gtk-quit!Cancel:1',
+            tooltip=True,
+        )
+        # if valid selection from user
+        # exec ff-dropper with that selection
+        if x is not None:
+            cmdStr = '{} -cmd={} &'.format(
+                p.cmdName,          # ff-dropper
+                x[0])               # our pick
+            os_call(cmdStr)         # re-execute with pick
+            return
+
+        '''these entries replaced by ff-copy2s gui picking function:
+            'ff-copy2as': 'ff-drop-sh copy2as',  # audio shrink
+            'ff-copy2vs': 'ff-drop-sh copy2vs',  # video shrink
+            'ff-copy2cc': 'ff-drop-sh copy2cc',  # change copy
+            'ff-copy2vo': 'ff-drop-sh copy2vo',	 # change volume
+            'ff-copy2tc': 'ff-drop-sh copy2tc',	 # title copy
+        '''
 
 
 """create program class."""
@@ -95,34 +152,43 @@ def main():
     #
     # set up my command line arguments
     #
-    parser = argparse.ArgumentParser(prog=p.cmdName,
+    p.buildCmndsAll()
+    parser = argparse.ArgumentParser(
+        prog=p.cmdName,
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        description='Drag n Drop window for various utilities',
-        epilog=p.cmdName + ' ' + p.version + ' ' + p.lastEdit)
+        description='Drag&Drop window for various utilities',
+        epilog='{} {} {}'.format(p.cmdName, p.version, p.lastEdit)
+    )
     parser.add_argument(
         '--logging',
         '-ll',
         required=False,
         type=str,
         default='INFO',
-        help='-ll=DEBUG|INFO|WARNING|ERROR|CRITICAL', metavar=''
+        metavar='',
+        choices=[
+            '10', '20', '30', '40', '50',
+            'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL',
+            'debug', 'info', 'warning', 'error', 'critical'
+        ],
+        help='-ll = DEBUG | INFO | WARNING | ERROR | CRITICAL'
     )
     parser.add_argument(
         '--logfile',
         '-lf',
         action='store_true',
+        default=False,
         required=False,
-        help='debug logging to ' + p.logFile + ' instead of the screen'
+        help='log to {} instead of the screen'.format(p.logFile)
     )
     parser.add_argument(
         '--command',
         '-cmd',
         required=False,
         type=str,
-        default='ff-rename -L 10 -F -s -e',
-        help='command=<cmd> (ff-enc|ff-info|ff-size|ff-title|ff-cropsize|\
-        ff-rename|ff-grok)',
-        metavar=''
+        default='ff-cleaner -ll 10 -lf -ex',
+        metavar='',
+        help='command=({})'.format(p.cmndsAll)
     )
     parser.add_argument(
         '--string',
@@ -130,8 +196,16 @@ def main():
         required=False,
         type=str,
         default='',
-        help='your command string',
-        metavar=''
+        metavar='',
+        help='your custom command string'
+    )
+    parser.add_argument(
+        '--pickFlag',
+        '-pf',
+        action='store_true',
+        required=False,
+        default=False,
+        help='choose the {} command from a yad dialog'.format(p.cmdName)
     )
     # default is no-buttons = True, setting it to False exposes
     # the YAD tail button
@@ -150,37 +224,51 @@ def main():
     #
     p.args, p.largs = parser.parse_known_args()
     # get loglevel and start logging
-    check_logging_args_argparse(p.args, p.logFile)
+    check_logging_args_argparse(p.args, p.args.logfile)
 
     # establish my path
     os.environ['PATH'] = p.PATH
     # myPATH = os.environ['PATH']
     # print(myPATH)
 
-    logging.debug('log level='+str(p.defLogLevel))
-    logging.debug('logfile='+('False', 'True')[p.args.logfile])
-    logging.debug('tailbutton='+('False', 'True')[p.args.tailButton])
+    logging.debug('log level={}'.format(str(p.defLogLevel)))
+    logging.debug('log2file={}'.format(('False', 'True')[p.args.logfile]))
+    logging.debug('pickFlag={}'.format(('False', 'True')[p.args.pickFlag]))
+    logging.debug('args=({})'.format(str(p.args)))
 
-    # process command line args
-    logging.debug('arg='+str(p.args))
+    # --pickFlag
+    # exec ff-dropper with user pick
+    if p.args.pickFlag:
+        p.pick()
+        exit(0)
 
-    #
-    # if a custom command string on CLI
-    # then set command to that string
-    #
+    # this code sets the dropper title and command from user CLI input
+    # if a custom command string on CLI with --string flag
+    # then set the command to that string
     if p.args.string:
         p.args.command = p.args.string
-        p.title = p.args.string.split(' ', 1)[0]		# word 1 from string
-        # p.title = p.args.string.partition(' ')[0]		# alternative method
-    elif 'ff-rename' not in p.args.command:		# not default -cmd=ff-something
-        p.title = p.args.command				# title is the ff-something
-        # lookup needs try/except to provide default
-        # get function has this built-in to it.
-        # p.args.command = p.cmnds[p.args.command]		# dict lookup
-        # dict get with failure default
-        p.args.command = p.cmnds.get(p.args.command, 'ff-rename -F -s -e')
+        p.title = p.args.string.split(' ', 1)[0]    # word 1 from string
+        # p.title = p.args.string.partition(' ')[0]	 # alternative method
+    # special case for default ff-cleaner
+    elif p.defCmdName in p.args.command:
+        p.title = p.defCmdName				          # title is ff-cleaner
+        p.args.command = p.defCmdStr                  # cmd is ff-cleaner
+    # else get/lookup the command, set title to head of the command
     else:
-        p.title = 'ff-rename'
+        # get/lookup the command from the commands dict
+        # default command is ff-cleaner (if no command specified)
+        p.args.command = \
+            p.cmnds.get(p.args.command, p.defCmdStr)
+        # NEW CODE
+        if 'ff-drop' in p.args.command:         # if ff-drop
+            if 'enc' in p.args.command:         # and ff-enc
+                p.title = 'ff-enc'              # then ff-enc title
+            else:
+                p.title = 'ff-copy2'            # else ff-copy2 title
+        else:
+            # NEW CODE
+            # else title is first word of command string
+            p.title = p.args.command.split(' ', 1)[0]   # word 1 from cmd
 
     # loop here until user closes program
     while True:
@@ -194,7 +282,7 @@ def main():
         # when the user pushes OKAY button then we can strip and call
         # some commands ourselves (we dont display an OKAY button)
         #
-        p.text = "Drag n Drop to "+p.title
+        p.text = 'Drag&Drop to {}'.format(p.title)
         # try:
         #  p.image = p.icon = p.images[p.title]
         # lookup icons/images for commands
@@ -204,28 +292,44 @@ def main():
             p.image = p.icon = p.images.get('ff-copy2', "")	 # get FFmpeg icon
         else:
             p.image = p.icon = p.images.get(p.title, "")  # or lookup by title
-        logging.debug("icon=image"+str(p.icon))
-        # os_notify('image='+p.image)
+        logging.debug('icon=image{}'.format(str(p.icon)))
+        # os_notify('image={}'.format(p.image))
 
         #
         # set the text,icon,tooltip,command and
         #  logfile name for the tailview button
         #
         if p.title == 'ff-rename':
-            buttonArg = \
-                "View-Log!cabview!Tail-the-Log:ff-tail -n 50 -f /tmp/ff-rename.log"
+            lfName = 'ff-rename.log'
+        elif p.title == 'ff-cleaner':
+            lfName = 'ff-cleaner.log'
         elif p.title == 'ff-enc':
-            buttonArg = \
-                "View-Log!cabview!Tail-the-Log:ff-tail -n 50 -f /tmp/ff-enc-pass.log"
+            lfName = 'ff-enc-pass.log'
         else:
-            buttonArg = \
-                "View-Log!cabview!Tail-the-Log:ff-tail -n 50 -f /tmp/ff-copy2.log"
-
+            lfName = 'ff-copy2.log'
+        # build the button arg string
+        if p.title in ('ff-enc', 'ff-rename', 'ff-copy2', 'ff-cleaner'):
+            p.args.tailButton = False
+            buttonArg = '{}!{}!{}:{}{}'.format(
+                'View-Log',                 # button text
+                'cabview',                  # button icon
+                'Tail-the-Log',             # tooltip text
+                'ff-tail -n 50 -f /tmp/',   # command string
+                lfName                      # and filename
+            )
+        else:
+            buttonArg = p.button
+        logging.debug('title={}'.format(p.title))
+        logging.debug('text={}'.format(p.text))
+        logging.debug('button={}'.format(buttonArg))
+        logging.debug('tailbutton={}'.format(
+            ('False', 'True')[p.args.tailButton]))
+        logging.debug('cmdStr={}'.format(p.args.command))
         #
         # if tailButton (reverse logic)
         # we display an image in the dialog
         #
-        if p.args.tailButton:
+        if p.args.tailButton is True:
             x = YAD().DND(
                 title=p.title,              # dialog title
                 command=p.args.command,		# cmd to run on drag and drop
@@ -233,7 +337,7 @@ def main():
                 geometry="180x40-25+25",    # window geometry
                 image=p.image,				# window image-makes window bigger
                 window_icon=p.icon,			# launcher icon
-                tooltip=True,				# display tooltip on rollovers
+                tooltip=True,               # display tooltip on rollovers
                 undecorated=False,			# False - no titlebar or buttons
                 on_top=True,                # place window on top of others
                 no_buttons=p.args.tailButton,  # no dialog buttons
