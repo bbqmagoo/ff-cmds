@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """First shot at Video Width/Height/Aspect Ratio Calculator in Python."""
-
+# -*- mode: python -*-
+# -*- coding: utf-8 -*-
 import os.path
 import sys
 from sys import argv, exit
@@ -11,7 +12,7 @@ from sys import version_info
 if version_info[0] < 3:
     from string import replace          # deprecated in python 3.0+
 '''
-# if sys.version_info[0] < 3:		# python2/3 compatability
+# if sys.version_info[0] < 3:        # python2/3 compatability
 #    input = raw_input
 # in python3 no raw_input - this provides code portability
 raw_input = vars(__builtins__).get('raw_input', input)
@@ -24,10 +25,10 @@ QUIT = 4
 #
 # pre-defined variables (GLOBAL)
 #
-myCmdName = os.path.basename(argv[0])       # save my command name (no path)
-myLogFile = '/tmp/'+myCmdName+'.txt'        # my logging filename
+myCmdName = os.path.basename(argv[0])           # save my command name
+myLogFile = '/tmp/{}.log'.format(myCmdName)     # logging filename
 myVersion = 'v0.1.2'
-lastEdit = '2016-09-29'
+lastEdit = '2016-10-25'
 lintStatus = True
 defLogLevel = 20
 
@@ -74,7 +75,9 @@ class Film:
     def about(self):
         """announce the solutions results."""
         print('\nWidth={}\nHeight={}\nAspect={}\n'.format(
-            self.width, self.height, self.aspect))
+            self.width,
+            self.height,
+            self.aspect))
 
 
 def main():
@@ -83,7 +86,7 @@ def main():
         prog=myCmdName,
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description='Solve for missing part of Aspect Ratio Equation',
-        epilog=myCmdName + ' ' + myVersion + ' ' + lastEdit
+        epilog='{} {} {}'.format(myCmdName, myVersion, lastEdit)
     )
     parser.add_argument(
         '--height',
@@ -130,7 +133,6 @@ def main():
     # non-args generate an error
     #
     args, largs = parser.parse_known_args()
-
     #
     # no largs (filenames left) after argscan
     # print help and exit
@@ -152,8 +154,8 @@ def main():
         # create Film class vid
         # create vid with values
         vid = Film(int(args.width), int(args.height), args.aspect)
-        vid.solve(vid)							# solve for missing (=0)
-        vid.about()							# print output
+        vid.solve(vid)                         # solve for missing (=0)
+        vid.about()                            # print output
         # raw_input('\nhit return to continue:')
         # exit(0)
 
@@ -172,7 +174,7 @@ def main():
     """)
         '''
         # stuff from some python install script
-        # sys.stdout.write(__doc__)	# print doc string at code top
+        # sys.stdout.write(__doc__)    # print doc string at code top
         # scriptDir = os.path.dirname(__file__) or os.curdir
         # print (os.path.dirname(__file__)) # output was '/home/magoo/.bin'
         # print (os.curdir) # output was '.'
@@ -321,7 +323,8 @@ def askYesNo(question, default="yes"):
         prompt = " [y/N] "
     else:
         # raise Error("invalid default answer: '%s'" % default)
-        raise("invalid default answer: '%s'" % default)
+        raise("invalid default answer: '{}'".format(default))
+        # raise("invalid default answer: '%s'" % default)
 
     while 1:
         sys.stdout.write(question + prompt)
@@ -333,8 +336,7 @@ def askYesNo(question, default="yes"):
             return valid[choice]
         else:
             sys.stdout.write(
-                "Please repond with 'yes' or 'no' " +
-                "(or 'y' or 'n').\n"
+                "Please repond with 'yes' or 'no' (or 'y' or 'n').\n"
             )
 
 
