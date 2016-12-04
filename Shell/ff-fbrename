@@ -298,5 +298,5 @@ status=$(filebot \
   --action "${_ACTION_}")
 
 # blab about it
-notify 2000 "$status"
+notify 5000 "$status"
 # echo "$status"
