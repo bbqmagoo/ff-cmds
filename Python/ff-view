@@ -1,0 +1,597 @@
+#!/usr/bin/env python3
+"""yad --Text-info windowed dialog interface to /usr/bin/cat command."""
+# -*- mode: python -*-
+# -*- coding: utf-8 -*-
+from sys import argv, exit
+import os.path
+import argparse
+from magoo.logtools import check_logging_args_argparse, logging
+from magoo.proctools import os_which, os_popen, os_call
+from magoo.proctools import os_getpid, os_check_output
+from tempfile import mkdtemp
+from yad import YAD
+from time import sleep
+import magic
+
+# 2016-11-23 - added html2pdf conversion and view function
+# 2016-11-28 - added python-magic - maybe change to use it
+# 2016-11-28 - added display mode for archives (deb, jar, 7z, zip ...)
+
+
+# information about this program (cmdname, edit date, version ...)
+class Program:
+    """This class hold common program info for this program."""
+
+    def __init__(self):
+        """this class holds common program info for this program."""
+        self.cmdName = os.path.basename(argv[0])            # save my cmdname
+        self.logFile = '/tmp/{}.log'.format(self.cmdName)   # logging filename
+        self.defLogLevel = 20				# default log level (INFO)
+        self.version = "v0.1.0"				#
+        self.lastEdit = "2016-10-16"		#
+        self.lintStatus = True              # been linted by flake8/pep8
+        self.PATH = ':'.join([
+            "/home/magoo/.bin",
+            "/usr/local/bin",
+            "/usr/bin",
+            "/bin"])
+        self.args = ""					# command args
+        self.largs = ""					# command files
+        self.iconPath = '/usr/share/icons'
+        # https://docs.python.org/2/library/os.path.html#os.path.normpath
+        '''
+        self.pigtail32 = os.path.normpath(os.path.join(
+            self.iconPath,
+            'Pigtails',
+            'Pigtail_32x32.png'))
+        '''
+        self.fileDur = 0                # place for file duration
+        self.fileCut = 10               # number of secs ffplay switch
+        self.icon = 'cabview'
+        self.image = 'cabview'
+        self.viewCmd = ""               # path of view command (cat)
+        self.imageCmd = "display"       # imageMagick display path
+        self.ffplayCmd = "ffplay"       # ffplay video command
+        self.xreaderCmd = "xreader"     # pdf reader command
+        self.ebookViewer = "ebook-viewer"  # calibre ebook viewer
+        self.libreCmd = "libreoffice"   # libreoffice command
+        self.mimeCmd = "mimetype"       # mimetype command
+        self.mimeFlags = "-b --file-compat"  # mimetype flags
+        self.fifoDir = ""               # fifo tempdir
+        self.fifoName = ""              # name of tail fifo
+        self.yadPid = ""                # actual yad pid
+        self.yadSHPid = ""              # files returned by YAD
+        self.currFType = ""             # file type text, video, image
+        self.fileWasDropped = False     # not command line
+        # what is reported by mimetype -b --file-compat (method 1)
+        # also addl lookups for python-magic(mime=true) (method 2)
+        # added mp3, flac, wav?, play with partial with ffplay
+        # octet-stream from python-magic (look deeper) (mobi, odb, mkdn, odb)
+        # lookup for octet stream is vrfy - never used, I dig deeper
+        self.fileTypes = {
+            "plain text document": "text",          # mimetype (text)
+            "text/plain": "text",                   # python-magic
+            "Python script": "text",                # mimetype (python)
+            "text/x-python": "text",                # python-magic
+            "Perl script": "text",                  # mimetype (Perl)
+            "text/plain": "text",                   # python-magic
+            "Ruby script": "text",                  # mimetype (Ruby)
+            "text/x-ruby": "text",                  # python-magic
+            "Java archive": "arc",                  # mimetype (Java Jar)
+            "application/java-archive": "arc",      # python-magic
+            "JavaScript program": "text",           # mimetype (java-script)
+            "text/x-c": "text",                     # python-magic
+            "Java source code": "text",             # mimetype (java)
+            "text/x-c": "text",                     # python-magic
+            "MPEG-4 video": "video",                # mimetype (mpeg4)
+            "video/webm": "video",                  # python-magic
+            "Matroska video": "video",              # mimetype (mkv)
+            "video/x-matroska": "video",            # python-magic
+            "Flash video": "video",                 # mimetype (flash flv)
+            "video/x-flv": "video",                 # python-magic
+            "AVI video": "video",                   # mimetype (avi)
+            "video/x-msvideo": "video",             # python-magic
+            "MP3 audio": "audio",                   # mimetype (mp3)
+            "audio/mpeg": "audio",                  # python-magic
+            "FLAC audio": "audio",                  # mimetype (flac)
+            "audio/x-flac": "audio",                # python-magic
+            "WAV audio": "audio",                   # mimetype (wav)
+            "audio/x-wav": "audio",                 # python-magic
+            "Ogg Vorbis audio": "audio",            # mimetype (ogg vorbis)
+            "audio/ogg": "audio",                   # python-magic
+            "JPEG image": "image",                  # mimetype (JPEG)
+            "image/jpeg": "image",                  # python-magic
+            "PNG image": "image",                   # mimetype (png)
+            "image/png": "image",                   # python-magic
+            "Microsoft Word Document": "doc",       # mimetype (msword)
+            "application/msword": "doc",            # python-magic
+            "OpenDocument Text": "doc",             # mimetype (libre Word)
+            "application/vnd.oasis.opendocument.text": "doc",  # p-m
+            "OpenDocument Presentation": "doc",     # mimetype (libre pres)
+            "application/vnd.oasis.opendocument.presentation": "doc",  # p-m
+            "OpenDocument SpreadSheet": "doc",      # mimetype (libre calc)
+            "application/vnd.oasis.opendocument.spreadsheet": "doc",   # p-m
+            "ODB database": "doc",                  # mimetype (libre db)
+            "application/octet-stream": "vrfy",     # python-magic (to loose)
+            "RTF document": "doc",                  # mimetype (notebook)
+            "text/rtf": "doc",                      # python-magic
+            "Markdown document": "mkdn",            # mimetype (markdown)
+            "application/octet-stream": "vrfy",     # python-magic (mkdn)
+            "Manpage manual document": "man",       # mimetype (?text)
+            "text/plain": "text",                   # python-magic
+            "Troff document": "roff",               # mimetype (troff-man)
+            "text/troff": "roff",                   # python-magic
+            "PS document": "ps",                    # mimetype (postscript)
+            "application/postscript": "ps",         # python-magic
+            "electronic book document": "epub",     # mimetype (epub)
+            "application/epub+zip": "epub",         # Python-magic
+            "Mobipocket e-book": "epub",            # mimetype (mobi, azw3)
+            "application/octet-stream": "vrfy",     # python-magic (mobi, azw3)
+            "Debian package": "arc",                # mimetype (deb pkg)
+            "application/vnd.debian.binary-package": "arc",  # p-m
+            "7-zip archive": "arc",                 # mimetype (7zip)
+            "application/x-7z-compressed": "arc",   # p-m
+            "Zip archive": "arc",                   # mimetype (zip)
+            "application/zip": "arc",               # p-m
+            "Tar archive (gzip-compressed)": "arc",  # mimetype (gzip)
+            "application/gzip": "arc",              # p-m
+            "Tar archive (XZ-compressed)": "arc",   # mimetype (XZ)
+            "application/x-xz": "arc",              # p-m
+            "Tar archive (bzip-compressed)": "arc",  # mimetype (bzip)
+            "application/x-bzip2": "arc",           # p-m
+            "executable": "ELF",                    # mimetype (ELF)
+            "application/x-executable": "ELF"       # python-magic
+        }
+
+    # not used here (used clocrt instead to filter troff output)
+    def filterNonPrint(self):
+        """Filter non printable chars from stream."""
+        return ''.join(
+            [c for c in self.fifoName if ord(c) > 31 or ord(c) == 9])
+
+    #
+    # https://stackoverflow.com/questions/1430446/\
+    #   create-a-temporary-fifo-named-pipe-in-python#1430566
+    def createFifo(self):
+        """Create a temporary fifo."""
+        self.fifoDir = mkdtemp()
+        self.fifoName = os.path.join(self.fifoDir, 'fifo')
+        os.mkfifo(self.fifoName)
+        return
+
+    def removeFifo(self):
+        """Remove temporary fifo."""
+        os.unlink(self.fifoName)
+        os.rmdir(self.fifoDir)
+        return
+
+    def displayYadWin(self):
+        """Display YAD dialog directly with Python (not used here)."""
+        self.yadReturn = YAD().TextInfo(
+            title='{} {}'.format(self.cmdName, self.fifoDir),
+            text='{} {}'.format(self.cmdName, self.args.file2View),
+            image=self.image,
+            image_on_top=True,
+            window_icon=self.icon,
+            no_focus=True,
+            no_markup=True,
+            on_top=True,
+            button0='gtk-close:0',
+            tail=False,
+            filename=self.fifoName
+        )
+        # print('YAD_PID={}'.format(os.environ['YAD_PID']))
+        return
+
+    # need arg that kills other procs if this terminates ?? (--auto-kill)
+    def displayTextWin(self):
+        """Build and display YAD text-info dialog."""
+        # display the YAD dialog window [BG] (waiting for a fifo stream)
+        # [BG] waiting on fifo-pipe
+        yadCmd = '{} {} {}={} {}={} {} {}={} {} {}={} {} {} {} {} {} &'.format(
+            os_which('yad'),
+            '--text-info',
+            '--title',
+            '\"{} {}\"'.format(self.cmdName, self.fifoDir),
+            '--text',
+            '\"{} {}\"'.format(self.cmdName, self.args.file2View),
+            '--geometry=550x450-50+50',
+            '--image',
+            '{}'.format(self.image),
+            '--image-on-top',
+            '--window-icon',
+            '{}'.format(self.icon),
+            '--no-focus',
+            '--no-markup',
+            '--on-top',
+            '--button=gtk-close:0',
+            '< {}'.format(self.fifoName)
+        )
+        self.yadSHPid = os_popen(
+            yadCmd,
+            shell=True,
+            wait=False,
+            ret_type='pid')
+        # find pid by mkstemp name
+        self.yadPid = os_getpid(p.fifoDir, kill=False)
+        logging.debug('yadSHPid={}'.format(self.yadSHPid))
+        logging.debug('yadPid={}'.format(self.yadPid))
+        return
+
+    def viewFile(self):
+        """build the view command (send to the fifo) [FG]."""
+        viewCmd = '{} {} \"{}\" > {}'.format(
+            os_which(self.viewCmd),            # cat or colcrt
+            ('', '-n')['cat' in self.viewCmd],  # number lines if cat
+            self.args.file2View,               # file to read from
+            self.fifoName)                     # send stream to fifo
+        # logging.info('SVC={}'.format(self.viewCmd))
+        # logging.info('VC={}'.format(viewCmd))
+        os_popen(viewCmd, wait=True)
+        return
+
+    def findFileType(self):
+        """Figure out file type of a file."""
+
+        # method 1 - use subprocess mimetype to get file data
+        fileCmd = '{} {} {}'.format(
+            os_which(self.mimeCmd),
+            self.mimeFlags,
+            self.args.file2View)
+        logging.debug('fileCmd={}'.format(fileCmd))
+        if self.args.file2View != '-':      # (stdin)
+            try:
+                reSULT = os_check_output(fileCmd).strip('\n').rstrip('\n')
+            except:
+                reSULT = "plain text document"
+        else:
+            reSULT = "plain text document"  # read stdin and text ftype
+        # lookup (get) filetype
+        logging.debug('result={}'.format(reSULT))   # lookup (get) filetype
+        self.currFType = self.fileTypes.get(reSULT, "text")
+
+        # method 2 - use python magic to find file mimetype database
+        reSULT2 = magic.from_file(self.args.file2View, mime=True)
+        (fN, fE) = os.path.splitext(self.args.file2View)
+        if 'octet-stream' in reSULT2:       # if appl/oct-strm
+            if fE in ('.mobi', '.azw2', '.azw3'):   # all epub
+                reSULT2 = 'epub'
+            if fE == '.odb':                # doc - libreoffice
+                reSULT2 = 'doc'
+        if fE == '.md':                     # mkdn - markdown
+            reSULT2 = 'mkdn'
+        logging.info('mt={}, pm={}'.format(
+            self.currFType,
+            reSULT2
+        ))
+        logging.debug('file type={}'.format(self.currFType))
+        return
+
+    def how2View(self):
+        """Pick proper viewer for each file mimetype"""
+        if self.currFType == 'text':
+            self.createFifo()          # create fifo
+            self.displayTextWin()      # display text window
+            self.viewFile()            # put file into window
+            self.removeFifo()          # remove fifo (clean)
+        elif self.currFType == 'video':
+            self.displayVideo()
+        elif self.currFType == 'audio':
+            self.playAudio()
+        elif self.currFType == 'image':
+            self.displayImage()
+        elif self.currFType == 'ps':
+            self.displayPdf()
+        elif self.currFType == 'pdf':
+            self.displayPdf()
+        elif self.currFType == 'epub':
+            self.displayEbook()
+        elif self.currFType == 'doc':
+            self.displayDoc()
+        elif self.currFType == 'html':
+            self.displayHTML()
+        elif self.currFType == 'man':
+            self.displayMan()
+        elif self.currFType == 'roff':
+            self.displayMan()
+        elif self.currFType == 'mkdn':
+            self.displayMD()           # put file into window
+        elif self.currFType == 'arc':
+            self.displayARCH()         # display archive file
+        else:
+            fileCmd = '{} {} {}'.format(
+                os_which(self.mimeCmd),
+                self.mimeFlags,
+                self.args.file2View)
+            reSULT = os_check_output(fileCmd).strip('\n').rstrip('\n')
+            if not self.fileWasDropped:
+                print('\nError: {}'.format(p.cmdName))
+                print('File.({})'.format(os.path.basename(p.args.file2View)))
+                print('No viewer 4.({})'.format(reSULT))
+            else:
+                notifyCmd = '{} -t {} \"{}\" \"{}\"'.format(
+                    os_which('notify-send'),
+                    5000,
+                    'Error: {}'.format(p.cmdName),
+                    'File.({})\nNo viewer 4.({})'.format(
+                        os.path.basename(p.args.file2View),
+                        reSULT))
+                os_call(notifyCmd)
+        return
+
+    def displayImage(self):
+        """Display image using imageMagick"""
+        imgCmd = '{} \"{}\" &'.format(
+            os_which(self.imageCmd),
+            self.args.file2View)
+        os_call(imgCmd)
+        return
+
+    def displayVideo(self):
+        """View part of video using ffplay"""
+        ffCmd = '{} {} {} {} {} {} \"{}\" &'.format(
+            os_which(self.ffplayCmd),
+            "-hide_banner",
+            "-autoexit",
+            "-an",                  # no audio (-nodisp 4 audio play)
+            "-ss 00:45",            # start 45 seconds in
+            "-t 05.0",              # play 5 seconds"
+            self.args.file2View)
+        os_call(ffCmd)
+        return
+
+    '''
+    https://stackoverflow.com/questions/260738/play-audio-with-python
+    def play(audio_file_path):
+        subprocess.call(["ffplay", "-nodisp", "-autoexit", audio_file_path])
+    '''
+    '''
+    Strategy: if file is short (< 10 seconds) then play with ffplay
+    otherwise play with xplayer and user can close the xplayer app
+    '''
+    def playAudio(self):
+        """Hear part of an audio using ffplay"""
+        self.mediaInfo()            # get file duration
+        if self.fileDur == 0:
+            logging.debug('Error: zero length audio')
+            return
+        print(self.fileDur)
+        if self.fileDur <= self.fileCut:    # if duration <= 10 (ffplay)
+            # play short file and exit ffplay app
+            ffCmd = '{} {} {} {} \"{}\" &'.format(
+                os_which(self.ffplayCmd),
+                "-hide_banner",
+                "-autoexit",
+                "-nodisp",          # no audio (-nodisp 4 audio play)
+                self.args.file2View)
+        else:
+            # audio longer than 10 secs
+            # xplayer app cancelled by user
+            ffCmd = '{} \"{}\" &'.format(
+                os_which('xplayer'),
+                self.args.file2View)
+        os_call(ffCmd)
+        return
+
+    def displayPdf(self):
+        """Display pdf using xviewer."""
+        pdfCmd = '{} {} {} \"{}\" &'.format(
+            os_which(self.xreaderCmd),
+            "-i 1",                     # page number
+            "-w",                       # preview mode
+            self.args.file2View)
+        os_call(pdfCmd)
+        return
+
+    def displayEbook(self):
+        """Display ebook using calibre ebook-viewer."""
+        ebookCmd = '{} \"{}\" &'.format(
+            os_which(self.ebookViewer),
+            self.args.file2View)
+        os_call(ebookCmd)
+        return
+
+    def displayDoc(self):
+        """Display doc using libreoffice."""
+        pdfCmd = '{} {} {} \"{}\" &'.format(
+            os_which(self.libreCmd),
+            "--view",                     # view read only
+            "--nologo",                   # no splash screen
+            self.args.file2View)
+        os_call(pdfCmd)
+        return
+
+    def displayMD(self):
+        """Process git markdown to pre-viewable pdf."""
+        # convert markdown to text, reset name and type fields
+        # call the how-to-view routine (new = file in /tmp)
+        # fpath = os.path.dirname(self.args.file2View)    # path (no end /)
+        fname, fext = os.path.splitext(
+            os.path.basename(self.args.file2View))
+        newName = '/tmp/{}.{}'.format(fname, 'txt')     # new file is text
+        mdCmd = '{} \"{}\" -o \"{}\"'.format(
+            os_which("pandoc"),
+            self.args.file2View,
+            newName
+        )
+        os_call(mdCmd)      # file.md ==> /tmp/file.md.txt
+        self.args.file2View = newName
+        self.currFType = "text"
+        self.how2View()
+        sleep(1)
+        # os.unlink(newName)                # remove tmpfile
+        return
+        '''
+        # use pandoc and latex to convert to pdf
+        # then call displayPdf() to view it better
+        # markdown to pdf
+        mdCmd = '{} -f markdown -t latex {} -o /tmp/{}.pdf'.format(
+            os_which("pandoc"),
+            self.args.file2View,
+            self.args.file2View,
+        )
+        os_call(mdCmd)      # file.md ==> /tmp/file.md.pdf
+        self.args.file2View = '/tmp/{}.pdf'.format(self.args.file2View)
+        self.currFType = "pdf"
+        self.how2View()
+        os.unlink(newName)                # remove tmpfile
+        return
+        '''
+
+    # https://stackoverflow.com/questions/39970899/\
+    #   how-to-convert-html-to-postscript-using-ghostscript
+    def displayHTML(self):
+        """Convert html to pdf -> display."""
+        fname, fext = os.path.splitext(
+            os.path.basename(self.args.file2View))
+        newName = '/tmp/{}.{}'.format(fname, 'pdf')     # new file is pdf
+        htmlCmd = '{} {} {} > /dev/null 2<&1'.format(
+            os_which('wkhtmltopdf'),
+            self.args.file2View,
+            newName
+        )
+        os_call(htmlCmd)     # format to man text
+        self.args.file2View = newName
+        self.currFType = "pdf"
+        self.how2View()                     # file gets streamed into dialog
+        sleep(1)                            # small delay before delete
+        os.unlink(newName)                  # delete temp file
+        return
+
+    def displayARCH(self):
+        """call xarchive to display various archives"""
+        archCmd = '{} {} &'.format(
+            os_which('xarchiver'),
+            self.args.file2View
+        )
+        os_call(archCmd)      # display archive jar/deb/arch ...
+
+    def mediaInfo(self):
+        """call mediainfo to get the file duration in msecs."""
+        mediaCmd = '{} {}=\"{}\" {}'.format(
+            os_which('mediainfo'),
+            '--Inform',
+            'General;%Duration%',
+            p.args.file2View
+        )
+        # return length of audio in seconds
+        self.fileDur = os_check_output(mediaCmd).rstrip('\n')
+        logging.info('audio duration={}'.format(self.fileDur))
+        if self.fileDur != "" and int(self.fileDur) >= 1000:
+            self.fileDur = int(int(self.fileDur) / 1000)
+        else:
+            self.fileDur = 0
+        return
+
+    # man -t sudo | ps2pdf - sudo.pdf
+    def displayMan(self):
+        """Display man document as text."""
+        fname, fext = os.path.splitext(
+            os.path.basename(self.args.file2View))
+        newName = '/tmp/{}.{}'.format(fname, 'txt')     # new file is text
+        manCmd = '{} -man \"{}\" > \"{}\"'.format(
+            os_which("nroff"),        # nroff man source to manpage
+            self.args.file2View,
+            newName
+        )
+        os_call(manCmd)     # format to man text
+        self.args.file2View = newName
+        self.currFType = "text"
+        self.viewCmd = os_which("colcrt")   # alter view to deroff input
+        self.how2View()                     # file gets streamed into dialog
+        sleep(1)                            # small delay
+        os.unlink(newName)                  # delete temp file
+        return
+
+# realize Program class
+p = Program()
+
+
+def main():
+    """Our program entry execution point."""
+    global p                # our program class
+
+    # build our command line flags arguments
+    parser = argparse.ArgumentParser(
+        prog=p.cmdName,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description='Display a file to yad dialog window',
+        epilog='{} {} {}'.format(p.cmdName, p.version, p.lastEdit)
+    )
+    parser.add_argument(
+        '--logging',
+        '-ll',
+        required=False,
+        type=str,
+        default='INFO',
+        metavar='',
+        choices=[
+            '10', '20', '30', '40', '50',
+            'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL',
+            'debug', 'info', 'warning', 'error', 'critical'
+        ],
+        help='loglevel = DEBUG | INFO | WARNING | ERROR | CRITICAL'
+    )
+    parser.add_argument(
+        '--logfile',
+        '-lf',
+        action='store_true',
+        required=False,
+        help='log to {} instead of the screen'.format(p.logFile)
+    )
+    # must be last arg (file 2 view)
+    parser.add_argument(
+        'file2View',
+        type=str,
+        default='',
+        action='store',
+        metavar='<[file-to-view]|[-]=(stdin)]>',
+        help='must be last argument'
+    )
+    #
+    # split options and non options into args, largs
+    # args = parser.parse_args() just parses args - nonargs generate an error
+    # default action of tail is to tail the file and exit
+    # if -f or -F flags - no exit - wait for appended file i/o
+    #
+    p.args, p.largs = parser.parse_known_args()
+    check_logging_args_argparse(p.args, p.logFile)  # get loglvl, init logging
+    p.viewCmd = os_which('cat')
+    # establish my path
+    os.environ['PATH'] = p.PATH
+    # myPATH = os.environ['PATH']
+    # print(myPATH)
+
+    if p.args.file2View == "":
+        print("Error: no filename to view")
+        exit(1)
+
+    if p.args.file2View == "-":
+        p.fileType = "text"
+
+    # trim the URI header off
+    # passed in by Drag N Drop
+    if 'file://' in p.args.file2View:
+        p.args.file2View = p.args.file2View[len('file://'):]
+        p.fileWasDropped = True
+        logging.debug('Cut file:// from URI:head')
+
+    # print(str(p.args))
+    logging.debug('log level={}'.format(p.args.logging))
+    logging.debug('file2view={}'.format(p.args.file2View))
+    logging.debug('log2file={}'.format(('False', 'True')[p.args.logfile]))
+    logging.debug('logFile name={}'.format(p.logFile))
+    logging.debug('view command={}'.format(p.viewCmd))
+    # logging.debug('pigtail32={}'.format(p.pigtail32))
+
+    # p.filterFifo()
+    p.findFileType()
+    p.how2View()
+    exit(0)
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        if p.currFType == "text":
+            p.removeFifo()
