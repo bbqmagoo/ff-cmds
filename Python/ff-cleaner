@@ -1,0 +1,619 @@
+#!/usr/bin/env python3
+"""New Shot at File renaming with filename class."""
+# -*- mode: python -*-
+# -*- coding: utf-8 -*-
+from sys import argv, exit
+import os.path
+from re import search
+import argparse
+from magoo.logtools import check_logging_args_argparse
+from magoo.logtools import logging, remove_logfile
+from magoo.proctools import os_which, os_call, os_popen
+from time import sleep
+# from yad import YAD
+#
+# 2016-10-26 - fix problem with find episode crashing condense
+# 2016-10-26 - add notify function for dropped files without execFlag
+# 2016-10-27 - add xTail function to Program class
+# 2016-10-27 - correct problems with path/filename/cwd (from ff-rename)
+# 2016-10-27 - fix logic bug in is_digit() part of norm_episode() function
+# 2016-10-28 - change program name to ff-cleaner
+# 2016-10-30 - add video directory rename function in Program class
+# 2016-11-02 - fix logic problems, add 201[0-6] to remove[], dates not epi
+# 2016-11-08 - add logic that allows for no valid episode name found
+# 2016-11-22 - add logic for shows that are two episodes combined
+
+
+class Program:
+    """This class holds common program info for this program."""
+
+    def __init__(self):
+        """Init Program class fields."""
+        self.cmdName = os.path.basename(argv[0])    # save my cmdname
+        self.logFile = '/tmp/{}.log'.format(self.cmdName)   # logging fname
+        self.xTailGeom = "60x6-50+50"		# taillog xterm geometry
+        self.fftailCmd = ""					# path to our ff-tail cmd
+        self.xTailPid = 0					# store debug window pid
+        self.tailCmd = 'ff-tail'            # actual tail program
+        self.defLogLevel = 20               # default log level (INFO)
+        self.version = "v0.1.3"
+        self.lastEdit = "2016-10-27"
+        self.lintStatus = True
+        self.execFlag = False           # no exec by default (simulate)
+        self.fileWasDropped = False     # file not drag&dropped
+        self.file = ""                  # for directory rename
+        self.args = ""                  # command option args
+        self.largs = ""                 # command files args
+
+    def xTail(self):
+        """Open a ff-tail window and tail the logfile - for debugging."""
+        #
+        # create the file if it doesnt exist
+        # truncate the file if it does exist
+        #
+        open(self.logFile, 'wb').close()
+
+        if not self.fftailCmd:
+            self.ffTailCmd = os_which(self.tailCmd)
+
+            # format command to create logtail window
+            tailCmd = \
+                "{} -n 50 -f {} &".format(self.ffTailCmd, self.logFile)
+            # create the window and get/save its process id
+            self.xTailPid = \
+                os_popen(tailCmd, shell=False, wait=False, ret_type='pid')
+            sleep(.5)
+            logging.debug('tailLogPid={}'.format(str(self.xTailPid)))
+        return
+        '''
+        # mate-terminal
+        mtermCmd = '{}'.format(
+            os_which('mate-terminal'),
+            '-title \"{}_{}\"'.format('mterm-Tail', self.logFile),
+            '-geometry {}'.format(self.xTailGeom),
+            '-x \"tail -n 25 -f {}\"'.format(self.logFile)
+        )
+        # build xterm command string for tail
+        xtermCmd = '{} {} {} {} &'.format(
+            os_which('xterm'),
+            '-title \"{} : logtail : {}\"'.format(self.cmdName, self.logFile),
+            '-geometry {} -sb +hold'.format(self.xTailGeom),
+            '-e \"tail -n 100 -f {}\"'.format(self.logFile)
+        )
+        self.xTailPid = \
+            os_popen(xtermCmd, shell=True, wait=False, ret_type='pid')
+        sleep(.5)
+        logging.debug('xterm={}'.format(xtermCmd))
+        return
+        '''
+
+    def XTailKill(self):
+        pass
+        return
+        # os_killpid(self.xTailPid, signal=15)
+        '''
+        # killCmd = '/bin/kill {}'.format(self.xTailPid)
+        # from subprocess import call
+        # os_call(killCmd, shell=True, executable='/bin/bash')
+        # os.popen("/bin/kill -9 "+p.xTailPid)
+        # remove_logfile(p.logFile)
+        '''
+
+    def renameDir(self):
+        logging.debug('renameDir()')
+        """Fix up an old style TV Dir, Replace -() with -[]."""
+        # directory S01.TV (xxxx) -> S01.TV-[xxxx]
+        old_name = self.file
+        self.file = self.file.replace(' (', '-[')
+        self.file = self.file.replace('-(', '-[')
+        self.file = self.file.replace(')', ']')
+        if self.file != old_name:
+            os.rename(old_name, self.file)
+            logging.debug('Dir rename={} -> {}'.format(
+                old_name,
+                self.file))
+        else:
+            logging.debug('{} not renamed'.format(old_name))
+        return
+
+
+class Filename:
+    """Deconstruct a filename, normalize it, and Put it back together."""
+
+    def __init__(self, filename):
+        """Init filename class fields, save some original values"""
+        self.original = filename               # keep original path/name copy
+        self.pathname = os.path.dirname(filename)   # save the path 4 rename
+        logging.debug('self.fp={}'.format(self.pathname))
+        self.filename = os.path.basename(filename)  # separate fn from rest
+        # self.filename = self.original.lower()  # lower() filename
+        self.filename = self.filename.lower()    # lower() filename
+        logging.debug('self.nm={}'.format(self.filename))
+        self.clean_strings()                     # clean internet DL words
+        split = self.filename.rsplit('.', 1)     # reverse split extent
+        # save rest in filename
+        #                      map these   to these  lose these
+        trans = str.maketrans("(){} *.&", "[][]___+", "',!;~")
+        # map bad chars to underscore
+        split[0] = split[0].translate(trans)
+        self.name = split[0].title()        # title caps of name = left part
+        # .ext = back half (if both chunks)
+        self.ext = split[1].lower() if len(split) == 2 else ''
+        self.words = self.name.split('_')   # break the left part into words
+        self.episode_idx = 0                # original index of episode part
+        self.episode = ""                   # store the episode# here
+        self.epiFlag = False                # episode found = True
+        self.find_episode()                 # find it - also sets idx in words
+        if self.epiFlag:
+            self.epiBuildName()
+        else:
+            self.othrBuildName()
+            '''
+            # self.norm_episode()             # normalize it
+            # logging.debug('epi={} idx={}'.format(
+            #    self.episode,
+            #    str(self.episode_idx)
+            # ))
+            # if we know our episode and what
+            # index it is in our words list
+            # we can build our showname and epiname
+            # self.x is list in front of episode #
+            # self.x = self.words[0:self.episode_idx]
+            # self.y is list after episode # & before .ext
+            # self.y = self.words[self.episode_idx + 1:]
+        else:
+            # self.x = self.words                # no epi, x is all words
+            # self.y = ""                        # y is None
+
+        # logging.debug('EpiFlag={}'.format(('False', 'True')[self.epiFlag]))
+        # logging.debug('self.x={}'.format(self.x))
+        # logging.debug('self.y={}'.format(self.y))
+        # self.fix_preps()                       # lowercase The, Of, A, And
+        if self.epiFlag:
+            self.x.append(self.episode)        # if epi append epi to words
+            # use underscore 4 normal names
+            self.showname = '_'.join(self.x)   # showname = join
+            self.epiname = '_'.join(self.y)    # join episode title words
+            self.fix_acronyms()                # fix common stuff (showname)
+            if len(self.epiname):              # prepend '_' if not null
+                # self.epiname = '_' + self.epiname
+                self.epiname = '_{}'.format(self.epiname)
+                # reassemble it back together
+            self.newname = '{}{}.{}'.format(
+                self.showname,
+                self.epiname,
+                self.ext
+            )
+        else:
+            self.showname = '_'.join(self.x)   # showname = join
+            self.fix_acronyms()                # fix common stuff (showname)
+            self.newname = '{}.{}'.format(
+                self.showname,
+                self.ext
+            )
+        '''
+        logging.debug('Current state={}'.format(self.newname))
+        logging.debug('self.init: Done')
+
+    def epiBuildName(self):
+        """We have an episode name, build name around it."""
+        logging.debug('epiBuildName()')
+        self.norm_episode()             # normalize it
+        logging.debug('epi={} idx={}'.format(
+            self.episode,
+            str(self.episode_idx)
+        ))
+        # if we know our episode and what
+        # index it is in our words list
+        # we can build our showname and epiname
+        # self.x is list in front of episode #
+        self.x = self.words[0:self.episode_idx]
+        # self.y is list after episode # & before .ext
+        self.y = self.words[self.episode_idx + 1:]
+        logging.debug('EpiFlag={}'.format(('False', 'True')[self.epiFlag]))
+        logging.debug('self.x={}'.format(self.x))
+        logging.debug('self.y={}'.format(self.y))
+        self.fix_preps()                   # lowercase The, Of, A, And
+        self.x.append(self.episode)        # if epi append epi to words
+        # use underscore 4 normal names
+        self.showname = '_'.join(self.x)   # showname = join
+        self.epiname = '_'.join(self.y)    # join episode title words
+        self.fix_acronyms()                # fix common stuff (showname)
+        if len(self.epiname):              # prepend '_' if not null
+            self.epiname = '_{}'.format(self.epiname)
+        # reassemble cleaned name it back together
+        self.newname = '{}{}.{}'.format(
+            self.showname,                 # front
+            self.epiname,                  # middle
+            self.ext                       # back (extent)
+        )
+        return
+
+    def othrBuildName(self):
+        """Build a non episode file name."""
+        logging.debug('othrBuildName()')
+        self.x = self.words                # no epi, x is all words
+        self.y = ""                        # y is None
+        logging.debug('self.x={}'.format(self.x))
+        self.fix_preps()                   # lowercase The, Of, A, And
+        self.showname = '_'.join(self.x)   # showname = join
+        self.fix_acronyms()                # fix common stuff (showname)
+        self.newname = '{}.{}'.format(
+            self.showname,
+            self.ext
+        )
+        return
+
+    def find_episode(self):
+        """search and find the episode number in a tv video file."""
+        matchStrings = [
+            '([Ss][0-9][0-9][Ee][0-9][0-9][Ee][0-9][0-9])',  # SxxExxExx
+            '([Ss][0-9][0-9][Ee][0-9][0-9])',           # SxxExx
+            '([0-9][0-9][xX][0-9][0-9])',               # SSxEE
+            '([0-9][xX][0-9][0-9])',                    # SxEE
+            '([0-9][xX][0-9])',                         # SxE
+            '([0-9][0-9][0-9][0-9])',                   # SSEE
+            '([0-9][0-9][0-9])',                        # SEE
+            '([Ss][0-9][0-9])',                         # Sxx
+        ]
+        logging.debug('self.find_episode()')
+        for ms in (0, 1, 2, 3, 4, 5, 6, 7):   # for each match table string
+            # logging.info('ms={}'.format(ms))
+            match = search(matchStrings[ms], self.name)     # re.search
+            if match:
+                logging.debug(repr(match))
+                mm = match.groups()            # matched/episode = match/grp
+                self.episode = mm[0]           # get match from group[0]
+                self.epiFlag = True            # flag as True
+                break                          # break out of for-loop
+            else:
+                continue                       # failed - try next match
+
+        if not self.epiFlag:                   # no episode name, done here
+            return
+
+        # else the epi-name (SxxExx)
+        logging.info('se={}'.format(self.episode))
+        # locate the position index of the epi-name in self.words
+        # we need to return the matched self.episode
+        # and the index of that match in self.words
+        try:
+            # save this index (points to epi-name idx# in title)
+            # easy - all bad internet words eliminated for title
+            self.episode_idx = self.words.index(mm[0])
+            logging.info('sei={}'.format(self.episode_idx))
+        except:
+            # exception - harder - locate the entry and fix it
+            # find the bad entry (probably has extra -str attached)
+            # replace the bad word-str with the proper epi-name
+            for w in range(len(self.words)):    # for all words
+                if mm[0] in self.words[w]:      # locate it
+                    self.words[w] = mm[0]       # replace it
+            self.episode_idx = self.words.index(mm[0])  # look again
+            logging.info('sei={}'.format(self.episode_idx))
+        return
+
+    def norm_episode(self):
+        """Given sxxexx, sXe, ssee, see, sxx - normalize it to SxxExx."""
+        logging.debug('self.norm_episode()')
+        episode_to_norm = self.episode
+        logging.debug('epi-in={}'.format(self.episode))
+        # SxxExx or SxxExxExx- return upper()
+        if len(episode_to_norm) == 6 or len(episode_to_norm) == 9:
+            self.episode = episode_to_norm.upper()
+            return
+        # len is 3 and just Sxx, no Exx
+        elif episode_to_norm[0] == 'S' and episode_to_norm[1:3].isdigit():
+            self.episode = episode_to_norm.upper()
+            self.episode = '{}{}'.format(self.episode, 'E00')
+            return
+        elif 'X' in episode_to_norm:            # 00x00 or similar
+            nn = episode_to_norm.split('X')     # split into 2 parts
+            self.episode = 'S{:02d}E{:02d}'.format(
+                int(nn[0]), int(nn[1]))         # fill in with zeros + numbers
+            return
+        elif episode_to_norm.isdigit():         # all digits
+            lw = len(episode_to_norm)
+            if lw == 3:                         # SEE
+                nn = (
+                    episode_to_norm[0:1],
+                    episode_to_norm[1:3]
+                )       # assign value based on len
+            elif lw == 4:                       # SSEE
+                nn = (
+                    episode_to_norm[0:2],
+                    episode_to_norm[2:4]
+                )           # assign value based on len
+        self.episode = 'S{:02d}E{:02d}'.format(
+            int(nn[0]), int(nn[1]))         # fill in with zeros + numbers
+        logging.debug('epi-out={}'.format(self.episode))
+        return
+
+    def clean_strings(self):
+        """Remove internet download words from self.filename."""
+        """called after the filename is copied and lowered()."""
+        remove = [
+            '2001', '2002', '2003', '2004', '2005', '2006', '2007', '2008',
+            '2009', '2010', '2011', '2012', '2013', '2014', '2015', '2016',
+            'hdtv', 'pdtvx264', 'killers', 'asap', '[ettv]', '[rartv]',
+            'fov', '[eztv]', '[rarbg]', 'tla', 'crimson', 'fum', 'batv',
+            'w4f', 'xvid', 'internal', 'dd5.1', 'rarbg', 'lol', 'immerse',
+            'dimension', '720p', '480p', 'msd', 'river', 'bajskorv', 'mfo',
+            'proper', 'repack', 'webrip', '2hd', 'web-dl', 'aac2.0', 'aaf',
+            'h.264', 'h264', 'btn', 'failed', 'yestv', 'jive', 'convert',
+            'xclusive', 'fihtv', 'hevc', 'ze', 'x265', 'tastetv', 'aac2',
+            'organic', 'mtg', 'xvid', 'chamee', 'afg', 'sneaky', 'www',
+            'tfpdl', 'com', 'nfo', '[vtv]', 'pdtv', 'x264', 'river', 'tlc',
+            'situs', 'medorc', '[gwc]', 'e-Subs', 'aac', 'hero', 'ajaxen',
+            'crooks', 'rb58', 'wnn', 'itv', 'eng', 'subs', 'pftv', 'c4tv',
+            'alterego', 'spamtv', 'hero', 'fleet', '[cttv]', 'hulu', 'avs',
+            'skgtv', 'deadpool', 'deflate', 'com_', 'cbfm', 'fgt', 'sva',
+            'moritz', 'absinth', 'amzn', 'rofl', 'dsny', 'first', 'fqm',
+            'mindthegap', 'ahdtv', 'futv', 'ntb', 'seriously', 'web', 'dl',
+            'heat', 'casstud', 'walmart', 'dhd', 'jitb', '1080p', 'mfo',
+            'plutonium', 'megusta', 'tvsmash', 'nick',
+        ]
+        logging.debug('self.clean_strings()')
+        new = self.filename
+        logging.info(new)
+        if '[ettv]' in new or '[cttv]' or '[rartv]' in new:
+            new = new.replace('[', '-[')        # spcl case-[[ec]ttv] prepend -
+        for s in remove:                        # for every word in list
+            if '20' in s:                       # special case for years
+                if ' '+s in new:
+                    new = new.replace(' '+s, '')  # repl with '' (removes it)
+            for p in ('.', '-', '_', '~'):      # for each .-_~
+                t = p+s                         # prepend
+                if t in new:                    # if found in name
+                    new = new.replace(t, '')    # repl with '' (removes it)
+                    continue                    # and continue to next test
+        if '..' in new:
+            new = new.replace('..', '.')    # special case - 2 dots together
+        if '  ' in new:
+            new = new.replace('  ', ' ')    # special case - 2 dots together
+        if '-' in new:
+            # logging.debug('in={}'.format(new))
+            new = new.replace(' '+'-'+' ', ' ')  # replace ' - ' => ' '
+            logging.debug('out={}'.format(new))
+        self.filename = new
+        logging.info(new)
+        return
+
+    def clean_words(self):
+        """remove internet torrent download words from self.y[]."""
+        """no longer used - (replaced by clean_strings)"""
+        # internet TV video download words
+        remove = [
+            'hdtv', 'killers', 'asap', '[ettv]', '[rartv]', 'lol',
+            'fov', '[eztv]', '[rarbg]', 'com', 'crimson', 'fum',
+            'batv', 'w4f', 'xvid', 'internal', 'rarbg', 'immerse',
+            'dimension', '720p', '480p', 'msd', 'river', 'bajskorv',
+            'proper', 'repack', 'webrip', '2hd', 'web-dl', 'aac2',
+            'h264', 'btn', 'failed', 'yestv', 'jive', 'convert',
+            'xclusive', 'fihtv', 'hevc', 'x265', 'tastetv', 'organic',
+            'mtg', 'xvid', 'chamee', 'afg', 'sneaky', 'www', 'tfpdl',
+            'nfo', 'aac', '[vtv]', 'river', 'situs', 'medorc',
+            'pdtvx264', 'pdtv', 'x264', '[gwc]',
+        ]
+        # remove
+        w = 0
+        while w < len(self.words):            # for words after the episode#
+            # print ('{}'.format(self.words[w]))
+            for r in remove:
+                # look for self.y word in remove
+                if self.words[w].lower() in r.lower():
+                    # print ('{}:'.format(self.words[w]), end='')
+                    self.words[w] = ''        # null the word
+            w += 1                            # increment word index
+        # condense the null words from the word list
+        w = 0
+        new = []
+        while w < len(self.words):          # for words after the episode#
+            if self.words[w]:
+                new.append(self.words[w])   # null words not appended
+            w += 1                          # increment word index
+        self.words = new                    # point to new data array
+        return
+
+    def fix_preps(self):
+        """loop over words(after word 0) if prep - change case to lower."""
+        logging.debug('self.fix_preps()')
+        i = 1
+        while i < len(self.x):
+            if self.x[i] in ("The", "And", "A", "Of"):
+                self.x[i] = self.x[i].lower()
+            i += 1
+        i = 1
+        while i < len(self.y):
+            if self.y[i] in ("The", "And", "A", "Of"):
+                self.y[i] = self.y[i].lower()
+            i += 1
+        return
+
+    def fix_acronyms(self):
+        """Find acros and fix(U), find long names and abbr(shorten)."""
+        # lookup and change Dict
+        Acros = {
+            'csi': 'CSI', 'ncis': 'NCIS', 'svu': 'SVU', 'us': 'US',
+            'ddd': 'DDD', 'w1a': 'W1A', 'usa': 'USA', 'pd': 'PD',
+            'lao': 'LAO', 'bbq': 'BBQ', 'snl': 'SNL', 'dcs': 'DCs',
+        }
+        Abbrevs = {
+            'Law_and_Order': 'LAO', 'Saturday_Night_Live': 'SNL',
+            'New_Orleans': 'NO', 'Los_Angeles': 'LA', 'Law_&_Order': 'LAO',
+            'S_H_I_E_L_D': 'SHIELD',
+        }
+        # acros and abbrevs words are replaced with looked up replacements
+        logging.debug('self.fix_acronyms()')
+        words = self.showname.split('_')
+        repl = ""
+        for w in words:            # for each of my words
+            repl = Acros.get(w.lower(), "")   # return "" if none
+            # lookup replacement by LC
+            if repl != "":          # if found - replace with Acronym
+                self.showname = \
+                    self.showname.replace(w, repl)  # found - replace
+                # logging.debug('word={} => repl={}'.format(w, repl))
+
+        for i in Abbrevs:               # for each abbrev in Dict
+            if i in self.showname:      # if long name found
+                repl = Abbrevs.get(i, "")   # return "" if none
+                if repl != "":            # if found-replace (abbrev)
+                    self.showname = \
+                        self.showname.replace(i, repl)
+        return
+
+    def dump(self):
+        """Dump the original and the newname(print)."""
+        logging.debug('self.dump()')
+        self.newname = os.path.join(self.pathname, self.newname)
+        if p.fileWasDropped is True:
+            notifyCmd = '{} -t {} \"{}\" \"{}\"'.format(
+                os_which('notify-send'),
+                5000,
+                '{} NOT Renamed'.format(p.cmdName),
+                '  IN={}\nOut={}'.format(self.original, self.newname)
+            )
+            os_call(notifyCmd)
+        print('{} -> {}'.format(self.original, self.newname))
+        return
+
+    # https://code.activestate.com/recipes/578359-media-file-renamer/
+    def __eq__(self, other):
+        """equivalence (“equality”) in Python classes."""
+        # ALL = ''.join(map(chr, range(256)))
+        # NUM = '0123456789'
+        # LET = ALL.translate(ALL, NUM)
+        # self.let = self.name.translate(ALL, NUM)
+        # self.num = self.name.translate(ALL, LET)
+        return bool(self.num) and other == int(self.num)
+
+    def rename(self):
+        """Dump the original, newname(print) and do Rename."""
+        logging.debug('self.rename()')
+        logging.debug('orig={}'.format(self.original))
+        # create the new pathname and rename the file
+        self.newname = os.path.join(self.pathname, self.newname)
+        logging.debug(' new={}'.format(self.newname))
+        print('{} -> {}'.format(self.original, self.newname))
+        if self.newname != self.original:
+            logging.debug('Attempting Rename:')
+            try:
+                os.rename(self.original, self.newname)
+            except:
+                pass
+                # sys.stderr.write('%sError: %s' % (ERR and '\n' or '', old))
+        else:
+            logging.debug('Filenames are equal: no Rename needed:')
+        return
+
+# realize my program class
+p = Program()
+
+
+def main():
+    """Program Execution begins here"""
+    global p
+
+    parser = argparse.ArgumentParser(
+        prog=p.cmdName,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description='{}\n{}\n{}'.format(
+            'Clean video buzz-words from TV-Show torrent downloads',
+            '  Example: the.big.bang.theory.5x05.hdtv.-x264.fleet.mkv',
+            '  is renamed to: The_Big_Bang_Theory_S05E05.mkv'),
+        epilog='{} {} {}'.format(p.cmdName, p.version, p.lastEdit)
+    )
+    parser.add_argument(
+        '--exec',
+        '-ex',
+        action='store_true',
+        help='actually execute the {} command'.format(p.cmdName)
+    )
+    parser.add_argument(
+        '--logging',
+        '-ll',
+        required=False,
+        type=str,
+        default='INFO',
+        metavar='',
+        choices=[
+            '10', '20', '30', '40', '50',
+            'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL',
+            'debug', 'info', 'warning', 'error', 'critical'
+        ],
+        help='-ll = DEBUG | NFO | WARNING | ERROR | CRITICAL'
+    )
+    parser.add_argument(
+        '--logfile',
+        '-lf',
+        action='store_true',
+        required=False,
+        help='log to {} instead of the screen'.format(p.logFile)
+    )
+    parser.add_argument(
+        '--taillog',
+        '-tl',
+        action='store_true',
+        required=False,
+        default=False,
+        help='Tail the log file to a gui dialog window'
+    )
+
+    #
+    # split options and non options into args, largs
+    # args = parser.parse_args() just parses args - nonargs generate an error
+    #
+    # from magoo.logtools
+    remove_logfile(p.logFile)       # From logtools - remove previous log
+    p.args, p.largs = parser.parse_known_args()
+
+    if p.args.taillog:
+        p.args.logfile = True           # set logfile true if tailing log
+        p.args.logging = '10'           # debug logging
+        # magoo/logtools
+        check_logging_args_argparse(p.args, p.logFile)
+        p.xTail()                         # create xtail window
+    else:
+        check_logging_args_argparse(p.args, p.logFile)
+
+    logging.debug('log level={}'.format(str(p.defLogLevel)))
+    logging.debug('execFlag={}'.format(('False', 'True')[p.args.exec]))
+    logging.debug('logfile={}'.format(('False', 'True')[p.args.logfile]))
+    logging.debug('taillog={}'.format(('False', 'True')[p.args.taillog]))
+
+    # check that they passed in at least one file to rename
+    if len(p.largs) < 1:
+        parser.print_help()
+        exit(2)
+
+    # process command line args
+    logging.debug('args={}'.format(str(p.args)))
+
+    for file in p.largs:
+        # trim the URI header off
+        # if passed in by Drag&Drop
+        if 'file://' in file:
+            p.fileWasDropped = True
+            file = file[len('file://'):]
+            logging.debug('Cut file:// from URI:head')
+            logging.debug('file={}'.format(file))
+        if os.path.isdir(file):
+            p.file = file
+            p.renameDir()               # directorys only
+            exit(0)
+
+        f = Filename(file)              # all files go here
+        if not p.args.exec:             # class def does the work
+            f.dump()                    # exec=false (just dump)
+        else:
+            f.rename()                  # exec=true (rename file)
+
+    # exit successful (from ff-rename)
+    if p.args.taillog and p.xTailPid != 0:
+        p.XTailKill()
+
+    exit(0)
+
+if __name__ == "__main__":
+    main()
